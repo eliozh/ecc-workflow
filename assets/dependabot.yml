@@ -1,0 +1,10 @@
+# Template for .github/dependabot.yml. Replace <ecosystem> with the stack's:
+# npm | pip | gomod | cargo | maven | gradle | nuget | composer | bundler | pub | docker
+version: 2
+updates:
+  - package-ecosystem: <ecosystem>
+    directory: /
+    schedule: { interval: weekly }
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }

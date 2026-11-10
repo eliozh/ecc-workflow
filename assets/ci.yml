@@ -1,0 +1,23 @@
+# Template for .github/workflows/ci.yml. The ci-author subagent fills in the
+# <placeholders> from CLAUDE.md and pins every action to a full commit SHA.
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [master]
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@<pinned-sha> # vX.Y.Z
+      # <stack setup action pinned to a SHA, with dependency caching>
+      - run: <install>
+      - run: <format check>
+      - run: <lint>
+      - run: <build>
+      - run: <test with coverage, failing under 80%>

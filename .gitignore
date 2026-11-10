@@ -1,0 +1,19 @@
+# Archify working artifacts for the workflow diagram
+.archify/
+
+# Local workflow state produced by the skill inside target projects
+.claude/ecc-workflow/
+.claude/*.local.md
+.claude/settings.local.json
+
+# Node
+node_modules/
+npm-debug.log*
+package-lock.json
+
+# Editors and OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
