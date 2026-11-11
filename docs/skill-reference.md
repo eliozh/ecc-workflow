@@ -26,15 +26,15 @@ flowchart LR
 | G1 | Problem, users, MVP, out of scope | Reply yes in chat |
 | G2 | The HTML preview: what the product looks like and how it flows | Annotate and click **Approve** in Plan Canvas, in your browser |
 | G3 | Stack, architecture decisions, slice order | Annotate and click **Approve** in Plan Canvas |
-| G4 | CI green on `master`, branch protection on | Reply yes |
+| G4 | CI green on the base branch, branch protection on | Reply yes |
 | G5 | Each pull request | Reply "merge" |
 | G6 | The release, running and verified | Reply yes |
 
 Along the way it:
 
 - **Guards the order.** Stage 0 (or F0 in feature mode) installs two Hookify rules that block code writes and scaffolding commands until G3. They're removed when you approve the plan.
-- **Uses feature branches throughout development.** Each slice is one `feat/<slice>` branch and one PR into `master`.
-- **Tracks every slice as an issue.** After G3 it creates exactly one issue per slice; every PR body carries `Closes #<issue>`, so merging the PR closes the issue.
+- **Uses feature branches throughout development.** Each slice is one `feat/<slice>` branch and one PR into the base branch.
+- **Tracks every slice as an issue.** After G3 and once the repository exists, it creates exactly one issue per slice; every PR body carries `Closes #<issue>`, so merging the PR closes the issue.
 - **Reviews every change** with the general and stack-specific reviewers, adds a security review when the change touches a security trigger, then runs a PR-level review before asking you to merge.
 - **Works for any stack.** The stages stay the same; the stack table in `WORKFLOW.md` picks the commands, rule pack, and reviewer. Projects with no GUI still get a preview: a CLI as terminal transcripts, an API as a reference page.
 

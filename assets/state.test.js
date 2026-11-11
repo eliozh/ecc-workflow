@@ -103,6 +103,67 @@ test('gate records status, time, and evidence', () => {
   }
 });
 
+test('slice updates a slice by id and refuses unknown ids', () => {
+  const dir = tempProject();
+  try {
+    state.initState(dir, { mode: 'greenfield', project: 'demo' });
+    state.setState(dir, [
+      'slices=[{"id":"01-signup","status":"pending"},{"id":"02-login","status":"pending"}]',
+    ]);
+
+    const updated = state.updateSlice(dir, '02-login', ['status=merged', 'pr=42']);
+    const merged = updated.slices.find((slice) => slice.id === '02-login');
+    assert.equal(merged.status, 'merged');
+    assert.equal(merged.pr, 42);
+    assert.equal(updated.slices.find((slice) => slice.id === '01-signup').status, 'pending');
+    assert.throws(() => state.updateSlice(dir, '03-missing', ['status=merged']), /unknown slice/);
+    assert.throws(() => state.updateSlice(dir, '02-login', ['id=renamed']), /cannot be changed/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('slices import merges by id, preserves runtime fields, and appends new slices', () => {
+  const dir = tempProject();
+  const file = path.join(dir, 'slices.json');
+  try {
+    state.initState(dir, { mode: 'greenfield', project: 'demo' });
+    state.setState(dir, [
+      'slices=[{"id":"01-signup","title":"Sign up","status":"merged","issue":7,"pr":9}]',
+    ]);
+    fs.writeFileSync(
+      file,
+      JSON.stringify([
+        { id: '01-signup', title: 'Sign up revised' },
+        { id: '02-login', title: 'Log in', ui: true },
+      ]),
+    );
+
+    const imported = state.importSlices(dir, file);
+    assert.equal(imported.slices[0].title, 'Sign up revised');
+    assert.equal(imported.slices[0].status, 'merged');
+    assert.equal(imported.slices[0].issue, 7);
+    assert.equal(imported.slices[0].pr, 9);
+    assert.equal(imported.slices[1].id, '02-login');
+    assert.equal(imported.slices[1].status, 'pending');
+    assert.equal(imported.slices[1].ui, true);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('slices import rejects duplicate ids in the file', () => {
+  const dir = tempProject();
+  const file = path.join(dir, 'slices.json');
+  try {
+    state.initState(dir, { mode: 'greenfield', project: 'demo' });
+    fs.writeFileSync(file, JSON.stringify([{ id: '01-a' }, { id: '01-a' }]));
+    assert.throws(() => state.importSlices(dir, file), /duplicate slice id/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
 test('checkpoint writes a copy and keeps the directory bounded', () => {
   const dir = tempProject();
   try {

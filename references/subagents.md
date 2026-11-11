@@ -9,6 +9,7 @@ Fill every field. Copy the **standard do-not list** and the role's **Do not** li
 ```text
 ROLE: <role name from the table below>
 PROJECT: <absolute project root>   STAGE: <N or F1–F7>   SLICE: <id or none>
+BASE BRANCH: <state.base_branch; master for greenfield unless changed>
 GOAL: <one deliverable, one sentence>
 READ: <exact paths; do not explore beyond these unless the task needs it>
 LOAD SKILLS: <ecc:skill names to load with the Skill tool, or none>
@@ -114,11 +115,11 @@ RETURN: Status line, files written, blockers. 15 lines or fewer.
 - **Do not:** change application code. Test against production. Commit screenshots or videos into tracked paths unless the brief says so.
 
 ### verifier
-- **Do:** run `ecc:verification-loop` (build, types, lint, tests with coverage, security grep, diff review against `master`). For UI slices, run `ecc:browser-qa` and compare against the preview at 375, 768, and 1440 px. In Stage 10, check the live URL with `ecc:browser-qa` and `ecc:canary-watch`. Report PASS or FAIL per check.
+- **Do:** run `ecc:verification-loop` (build, types, lint, tests with coverage, security grep, diff review against `<base-branch>`). For UI slices, run `ecc:browser-qa` and compare against the preview at 375, 768, and 1440 px. In Stage 10, check the live URL with `ecc:browser-qa` and `ecc:canary-watch`. Report PASS or FAIL per check.
 - **Do not:** fix anything; report only. Call a check passed when it didn't run.
 
 ### reviewer (all review agents)
-- **Do:** review only `git diff master...HEAD` (or the scope in the brief). Return a findings table: severity (CRITICAL, HIGH, MEDIUM, LOW), `file:line`, issue, suggested fix, and confidence. Say "no findings" explicitly when there are none.
+- **Do:** review only `git diff <base-branch>...HEAD` (or the scope in the brief). Return a findings table: severity (CRITICAL, HIGH, MEDIUM, LOW), `file:line`, issue, suggested fix, and confidence. Say "no findings" explicitly when there are none.
 - **Do not:** edit files, including `ecc:performance-optimizer` and `ecc:a11y-architect`, which have write tools; this role is read-only. Review code outside the scope. Report style preferences as HIGH or CRITICAL.
 
 ### fixer

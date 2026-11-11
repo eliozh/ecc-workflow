@@ -14,6 +14,8 @@
  *                      [--slug <slug>] [--base-branch <branch>]
  *                      [--base-commit <sha>] [--spec <path>]
  *   node state.js set key=value [key=value ...]
+ *   node state.js slice <id> key=value [key=value ...]
+ *   node state.js slices import <file>
  *   node state.js gate <G1..G6> <pending|approved|n/a|inherited> [--evidence <path>]
  *   node state.js begin --role <role> [--step <step>] [--handoff <path>]
  *   node state.js end [--next "<next action>"]
@@ -374,6 +376,84 @@ function setState(root, args) {
   return writeState(root, state, { label: 'set' });
 }
 
+function findSlice(state, id) {
+  const slices = Array.isArray(state.slices) ? state.slices : [];
+  const slice = slices.find((item) => item && item.id === id);
+  if (!slice) fail(`unknown slice: ${id}`);
+  return slice;
+}
+
+function updateSlice(root, id, args) {
+  if (!id) fail('usage: slice <id> key=value [key=value ...]');
+  if (args.length === 0) fail('usage: slice <id> key=value [key=value ...]');
+  const state = readState(root);
+  const slice = findSlice(state, id);
+  for (const pair of args) {
+    const separator = pair.indexOf('=');
+    if (separator < 1) fail(`bad assignment: ${pair}`);
+    const key = pair.slice(0, separator);
+    if (key === 'id') fail('a slice id cannot be changed');
+    setPath(slice, key, parseValue(pair.slice(separator + 1)));
+  }
+  return writeState(root, state, { label: `slice-${safeSlug(id)}` });
+}
+
+function readSliceList(root, file) {
+  if (!file) fail('usage: slices import <file>');
+  const target = path.isAbsolute(file) ? file : path.resolve(root, file);
+  let raw;
+  try {
+    raw = fs.readFileSync(target, 'utf8');
+  } catch (error) {
+    fail(`cannot read ${file}: ${error.message}`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    fail(`${file} is not valid JSON: ${error.message}`);
+  }
+  const list = Array.isArray(parsed)
+    ? parsed
+    : parsed && Array.isArray(parsed.slices)
+      ? parsed.slices
+      : null;
+  if (!list) fail(`${file} must be an array of slices or an object with a "slices" array`);
+  return list;
+}
+
+function importSlices(root, file) {
+  const incoming = readSliceList(root, file);
+  const state = readState(root);
+  const merged = (Array.isArray(state.slices) ? state.slices : []).map((slice) => ({ ...slice }));
+  const positions = new Map(merged.map((slice, index) => [slice.id, index]));
+  const seen = new Set();
+  for (const item of incoming) {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) {
+      fail('every imported slice must be a JSON object');
+    }
+    const id = String(item.id || '').trim();
+    if (!id) fail('every imported slice needs an id');
+    if (seen.has(id)) fail(`duplicate slice id in import: ${id}`);
+    seen.add(id);
+    const position = positions.get(id);
+    if (position === undefined) {
+      positions.set(id, merged.length);
+      merged.push({ status: 'pending', ...item, id });
+      continue;
+    }
+    const existing = merged[position];
+    const next = { ...existing, ...item, id };
+    for (const key of ['status', 'branch', 'issue', 'pr']) {
+      if (item[key] === undefined) next[key] = existing[key];
+    }
+    if (next.status === undefined) next.status = 'pending';
+    merged[position] = next;
+  }
+  state.slices = merged;
+  return writeState(root, state, { label: 'slices-import' });
+}
+
 function gateState(root, args, opts = {}) {
   const [id, status] = args;
   if (!id || !status) {
@@ -564,6 +644,8 @@ function usage() {
     '  state.js init --mode <greenfield|feature> [--project <name>] [--slug <slug>]',
     '                  [--base-branch <branch>] [--base-commit <sha>] [--spec <path>]',
     '  state.js set key=value [key=value ...]',
+    '  state.js slice <id> key=value [key=value ...]',
+    '  state.js slices import <file>',
     '  state.js gate <G1..G6> <pending|approved|n/a|inherited> [--evidence <path>]',
     '  state.js begin --role <role> [--step <step>] [--handoff <path>]',
     '  state.js end [--next "<next action>"]',
@@ -597,6 +679,17 @@ function dispatch(argv) {
     }
     case 'set': {
       console.log(summarize(setState(root, args)));
+      return;
+    }
+    case 'slice': {
+      const id = args.shift();
+      console.log(summarize(updateSlice(root, id, args)));
+      return;
+    }
+    case 'slices': {
+      const action = args.shift();
+      if (action !== 'import') usage();
+      console.log(summarize(importSlices(root, args[0])));
       return;
     }
     case 'gate': {
@@ -684,6 +777,8 @@ module.exports = {
   checkpoint,
   initState,
   setState,
+  updateSlice,
+  importSlices,
   gateState,
   beginState,
   endState,

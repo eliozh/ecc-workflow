@@ -245,7 +245,7 @@ rm .claude/hookify.block-code-before-approval.local.md \
 git add -A && git commit -m "docs: approve architecture and implementation plan"
 ```
 
-之后必须为计划中的每个切片创建一个 issue，标题为 `[<slice-id>] <title>`，并把编号记入工作流状态；每个 PR 正文必须包含 `Closes #<issue>`。
+之后把批准的切片清单记入工作流状态。greenfield 项目在第 7 阶段 `gh repo create` 之后创建 issue 批次；后续里程碑在仓库已存在时于此处创建。每个切片一个 issue，标题为 `[<slice-id>] <title>`，用 `state.js slice <slice-id> issue=<n>` 记录；每个 PR 正文必须包含 `Closes #<issue>`。
 
 ## 第 6 阶段：脚手架
 
@@ -270,7 +270,8 @@ git add -A && git commit -m "docs: approve architecture and implementation plan"
 **创建仓库。** 这是对外操作，先确认名称和可见性：
 
 ```bash
-gh repo create <name> --private --source=. --push
+gh repo create <name> --private --source=. --push   # 私有
+gh repo create <name> --public  --source=. --push   # 公开
 ```
 
 **CI：`.github/workflows/ci.yml`。** 根据技术栈表填写占位符。把 action 固定到完整的提交 SHA。`skill:deployment-patterns` 有更完整的流水线，但其示例仅针对 Node。
@@ -328,7 +329,7 @@ GitHub 免费计划的私有仓库可能不提供此功能。如果是这样，�
 
 **PR 模板：`.github/PULL_REQUEST_TEMPLATE.md`。** 包含：改了什么、为什么改、关联的 issue 和 PRD 里程碑、做过的测试、与预览对比的截图，以及密钥检查清单。`/pr` 会自动找到并使用此模板。
 
-**Issue：** 硬性要求，每个切片一个，由主代理在 G3 之后用 `gh issue create` 创建；每个 PR 正文必须包含 `Closes #<issue>`，合并即关闭该 issue。`skill:github-ops` 涵盖分诊。较大的工作使用 `/epic-decompose` 及其他 `/epic-*` 命令，或用 `skill:story-lifecycle` 作为基于文件的替代方案。团队可以添加 `CODEOWNERS` 文件。
+**Issue：** 硬性要求，每个切片一个，由主代理在 G3 之后、仓库存在时用 `gh issue create` 创建（greenfield 在第 7 阶段；feature mode 在 F5）。每个 PR 正文必须包含 `Closes #<issue>`，合并即关闭该 issue。`skill:github-ops` 涵盖分诊。较大的工作使用 `/epic-decompose` 及其他 `/epic-*` 命令，或用 `skill:story-lifecycle` 作为基于文件的替代方案。团队可以添加 `CODEOWNERS` 文件。
 
 **G4：** 骨架在 `master` 上的 CI 中通过，并且直接推送到 `master` 会被拒绝。
 

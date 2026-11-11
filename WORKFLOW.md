@@ -245,7 +245,7 @@ rm .claude/hookify.block-code-before-approval.local.md \
 git add -A && git commit -m "docs: approve architecture and implementation plan"
 ```
 
-Then create exactly one issue per slice in the plan, titled `[<slice-id>] <title>`, and record the numbers in the workflow state. Every PR body must contain `Closes #<issue>`.
+Then record the approved slice list in the workflow state. Greenfield projects create the issue batch in Stage 7, after `gh repo create`; later milestones create theirs here, now that the repository exists. One issue per slice, titled `[<slice-id>] <title>`, recorded with `state.js slice <slice-id> issue=<n>`. Every PR body must contain `Closes #<issue>`.
 
 ## Stage 6: Scaffold
 
@@ -270,7 +270,8 @@ Commit: `chore: scaffold project` and `feat: add walking skeleton`.
 **Create the repo.** This is outward-facing, so confirm the name and visibility first:
 
 ```bash
-gh repo create <name> --private --source=. --push
+gh repo create <name> --private --source=. --push   # private
+gh repo create <name> --public  --source=. --push   # public
 ```
 
 **CI: `.github/workflows/ci.yml`.** Fill in the placeholders from the stack table. Pin actions to full commit SHAs. `skill:deployment-patterns` has a fuller pipeline, but its example is Node-specific.
@@ -328,7 +329,7 @@ Private repos on the free GitHub plan may not offer this. If so, make the repo p
 
 **PR template: `.github/PULL_REQUEST_TEMPLATE.md`.** Include: what changed, why, the linked issue and PRD milestone, testing done, screenshots compared to the preview, and a secrets checklist. `/pr` finds and uses this template automatically.
 
-**Issues:** required, one per slice, created by the orchestrator via `gh issue create` after G3. Every PR body must contain `Closes #<issue>` so merging closes the issue. `skill:github-ops` covers triage. For larger work, use `/epic-decompose` and the other `/epic-*` commands, or `skill:story-lifecycle` for a file-based alternative. Teams can add a `CODEOWNERS` file.
+**Issues:** required, one per slice, created by the orchestrator via `gh issue create` after G3 and once the repository exists (Stage 7 for greenfield; F5 for feature mode). Every PR body must contain `Closes #<issue>` so merging closes the issue. `skill:github-ops` covers triage. For larger work, use `/epic-decompose` and the other `/epic-*` commands, or `skill:story-lifecycle` for a file-based alternative. Teams can add a `CODEOWNERS` file.
 
 **G4:** the skeleton runs green in CI on `master`, and a direct push to `master` is rejected.
 

@@ -6,13 +6,13 @@ Load one section at a time:
 sed -n '/^## Stage N:/,/^## Stage /p' <skill-dir>/references/stages.md
 ```
 
-`H` below means `.claude/ecc-workflow/handoffs`, and `S` means `.claude/ecc-workflow/slices/<slice-id>`. Every subagent is briefed per `references/subagents.md`. Update state through `assets/state.js` after each numbered step.
+`H` below means `.claude/ecc-workflow/handoffs`, and `S` means `.claude/ecc-workflow/slices/<slice-id>`. `<base-branch>` means `state.base_branch` (`master` for a greenfield project unless the human chose another name). Every subagent is briefed per `references/subagents.md`. Update state through `assets/state.js` after each numbered step.
 
 Three sequences share this file:
 
 - **Greenfield:** Stages 0–11.
 - **Feature:** Stages F0–F7, then back to the paused milestone.
-- **Shared:** 2, 3, 4, 5, 8, 9, and 10 are reused by feature mode; their procedures are unchanged unless an F-stage section says otherwise. In feature mode, replace `master` in branch and diff commands with `state.base_branch`.
+- **Shared:** 2, 3, 4, 5, 8, 9, and 10 are reused by feature mode; their procedures are unchanged unless an F-stage section says otherwise. Commands use `<base-branch>`, which resolves to `state.base_branch`.
 
 ## Stage 0: Bootstrap
 
@@ -34,7 +34,7 @@ node <skill-dir>/assets/state.js init --mode greenfield --project <name>
    Also ask whether to install the optional state snapshot hooks. On yes, run `node <skill-dir>/assets/state.js hooks install`; `bootstrap.sh` already gitignores `.claude/settings.local.json`.
 4. Confirm both rules are active with `/ecc:hookify-list`. If hooks are off, stop and tell the human how to enable them.
 
-Exit: both guard rules listed, one commit on `master`.
+Exit: both guard rules listed, one commit on the base branch (`master` by default).
 
 ## Stage 1: PRD
 
@@ -106,7 +106,13 @@ git add design && git commit -m "docs: approve HTML preview"
 1. Dispatch **architect**. READ: PRD, `H/02-research.md`, `design/DESIGN.md`, `design/flows.md`, `design/preview/index.html`. HANDOFF: `H/05-architecture.md`.
 2. Show the human the options and recommendation (from the summary) and ask them to choose the stack. Record `stack` in state, using an id from the stack table in `WORKFLOW.md` when one fits.
 3. Dispatch **planner**. READ: PRD, the ADRs, `H/05-architecture.md`, `design/flows.md`. HANDOFF: `H/05-plan.md`.
-4. Copy the slice list from the plan into `state.slices`.
+4. Copy the slice list from the plan into `state.slices`. Prefer writing the list as JSON and importing it, so slices are matched by id instead of position:
+
+```bash
+node <skill-dir>/assets/state.js slices import <file>
+```
+
+   The importer appends new ids, preserves an existing slice's `status`, `branch`, `issue`, and `pr`, and rejects duplicate ids.
 5. **G3:** run the same Plan Canvas loop as Stage 4 on `.claude/plans/<name>.plan.md`, dispatching planner (or architect, for ADR changes) to apply feedback. On `approve`:
 
 ```bash
@@ -114,7 +120,11 @@ ecc-plan-canvas end .claude/plans/<name>.plan.md
 bash <skill-dir>/assets/guard.sh remove
 ```
 
-6. After `approve`, create exactly one issue per slice before any slice work, titled `[<slice-id>] <title>` (the M1 format). This is required: do not proceed to Stage 6 or Stage 8 without it. Each body names the milestone, the plan path and §4 of the plan, whether a security review is required, and the done-when: the slice's acceptance criteria pass in CI `verify` and the PR body contains `Closes #<issue>`. Record the issue numbers in `state.slices`. The G3 plan approval authorizes this batch; it needs no separate confirmation.
+6. After `approve`, make sure the approved slice list is in `state.slices` (the import in step 4 does this). **Do not create issues here for a greenfield project:** the remote does not exist until Stage 7. Stage 7 step 6 creates the issue batch after `gh repo create`, and the G3 approval authorizes it. When this stage runs for a later milestone, the repository already exists, so create one issue per new slice here after G3. In both cases, never duplicate an issue that a slice already has, and record each number with:
+
+```bash
+node <skill-dir>/assets/state.js slice <slice-id> issue=<n>
+```
 7. Have the architect's ADRs flipped from `proposed` to `accepted` (trivial edit, orchestrator), then commit `docs: approve architecture and implementation plan`.
 
 ## Stage 6: Scaffold
@@ -130,10 +140,11 @@ Exit: build and tests pass locally.
 ## Stage 7: GitHub and CI
 
 1. Dispatch **ci-author**. READ: `CLAUDE.md`, `<skill-dir>/assets/ci.yml`, `<skill-dir>/assets/dependabot.yml`, `<skill-dir>/assets/pull_request_template.md`. HANDOFF: `H/07-ci.md`. Commit `ci: add CI, Dependabot, and PR template`.
-2. Ask for the repo name and visibility. On confirmation:
+2. Ask for the repo name and visibility. On confirmation, create it with exactly one visibility flag:
 
 ```bash
-gh repo create <name> --private --source=. --push
+gh repo create <name> --private --source=. --push   # private
+gh repo create <name> --public  --source=. --push   # public
 ```
 
 3. Watch CI (background). If it fails, follow the CI-failure rule in `SKILL.md`.
@@ -145,7 +156,7 @@ gh run watch --exit-status
 4. Ask to enable branch protection. On confirmation, apply it, using a review count of `0` when solo:
 
 ```bash
-gh api -X PUT repos/<owner>/<name>/branches/master/protection --input - <<'EOF'
+gh api -X PUT repos/<owner>/<name>/branches/<base-branch>/protection --input - <<'EOF'
 {
   "required_status_checks": { "strict": true, "contexts": ["verify"] },
   "enforce_admins": true,
@@ -156,13 +167,13 @@ EOF
 ```
 
    If the plan doesn't support it (private repo on the free plan), tell the human and record `protection: "convention"` in state.
-5. Read it back, without test-pushing to `master`:
+5. Read it back, without test-pushing to `<base-branch>`:
 
 ```bash
-gh api repos/<owner>/<name>/branches/master/protection --jq '.required_status_checks.contexts'
+gh api repos/<owner>/<name>/branches/<base-branch>/protection --jq '.required_status_checks.contexts'
 ```
 
-6. First milestone only, or any milestone planned through Stage 7: ensure every slice has exactly one issue. Create any missing issues in the `[<slice-id>] <title>` format from Stage 5 and record the numbers in `state.slices`, skipping any slice that already has one. Milestones planned later create their issues through Stage 5 step 6; never create a duplicate issue for a slice that already has one.
+6. This is where a greenfield project creates its issue batch, after the remote exists. For every slice in the approved plan, create exactly one issue titled `[<slice-id>] <title>`, skipping any slice that already has one. Each body names the milestone, the plan path and §4 of the plan, whether a security review is required, and the done-when: the slice's acceptance criteria pass in CI `verify` and the PR body contains `Closes #<issue>`. The G3 approval already authorized this batch; do not ask again. Record each number with `node <skill-dir>/assets/state.js slice <slice-id> issue=<n>`. Later milestones, planned when the repository already exists, create their issues at Stage 5 step 6 after G3.
 7. Remind the human to enable secret scanning, push protection, Dependabot alerts, and CodeQL under Settings → Code security. These aren't done by the skill.
 
 **G4:** show the green run link and the protection read-back. On yes, set G4 approved, `stage: 8`, `current_slice` = first pending slice.
@@ -171,10 +182,11 @@ gh api repos/<owner>/<name>/branches/master/protection --jq '.required_status_ch
 
 Repeat per slice. One slice equals one branch equals one PR.
 
-1. Branch from an up-to-date `master`:
+1. Mark the slice current and branch from an up-to-date `<base-branch>`:
 
 ```bash
-git switch master && git pull --ff-only && git switch -c feat/<slice-id>
+node <skill-dir>/assets/state.js set current_slice=<slice-id> status=in-progress
+git switch <base-branch> && git pull --ff-only && git switch -c feat/<slice-id>
 ```
 
 2. Extract the slice's section of the plan into `S/brief.md`. Add the preview screens it implements and the stack's test command.
@@ -189,7 +201,7 @@ Exit: verification passes.
 
 ## Stage 9: Code and security review
 
-1. Dispatch reviewers **in parallel**, each read-only with scope `git diff master...HEAD`:
+1. Dispatch reviewers **in parallel**, each read-only with scope `git diff <base-branch>...HEAD`:
    - always: `ecc:code-reviewer` and the stack reviewer (stack table in `WORKFLOW.md`)
    - `security: true` slice or a diff touching auth, user input, queries, file paths, external APIs, crypto, payments, or secrets: `ecc:security-reviewer`
    - `ui: true`: `ecc:a11y-architect` (review only)
@@ -203,7 +215,7 @@ Exit: verification passes.
 git push -u origin feat/<slice-id>
 ```
 
-   Then run `/ecc:pr master`. The body must contain `Closes #<issue>` so merging the PR closes the issue; if `state.base_branch` is not the repository default branch, close the issue explicitly after the merge. Also add the MEDIUM findings for traceability: MEDIUMs are fixed before merge, so this list records what was fixed plus any accepted or deferred item.
+   Then run `/ecc:pr <base-branch>`. The body must contain `Closes #<issue>` so merging the PR closes the issue; if `state.base_branch` is not the repository default branch, close the issue explicitly after the merge. Also add the MEDIUM findings for traceability: MEDIUMs are fixed before merge, so this list records what was fixed plus any accepted or deferred item.
 5. Watch checks in the background, and handle failures with build-fixer:
 
 ```bash
@@ -216,17 +228,18 @@ gh pr checks <n> --watch
 
 ```bash
 gh pr merge <n> --squash --delete-branch
-git switch master && git pull --ff-only
+git switch <base-branch> && git pull --ff-only
 ```
 
-Set the slice to `merged` and clear the slice point in one write:
+Mark the slice merged and point `current_slice` at the next step:
 
 ```bash
 node <skill-dir>/assets/state.js gate G5 approved --evidence "<PR URL>"
-node <skill-dir>/assets/state.js set slices.<index>.status=merged current_slice=null status=in-progress
+node <skill-dir>/assets/state.js slice <slice-id> status=merged
+node <skill-dir>/assets/state.js set current_slice=<next-id> status=in-progress
 ```
 
-`<index>` is the slice's zero-based position in `state.slices`. Then set `next_action` for the route that applies:
+Set `current_slice` to the next pending slice id, or to `null` when the milestone is done. Then set `next_action` for the route that applies:
 
 - **Next pending slice:** `next_action` = `Start slice <next-id>: branch feat/<next-id> from <base-branch> and dispatch implementer with slices/<next-id>/brief.md`. Back to Stage 8.
 - **Milestone done but the PRD has more pending milestones:** mark the milestone `complete`, set `next_action` to the next planning step, then run Stage 5 steps 3–6 for the next milestone (planner, slice list, G3, then slice issues; the guard is gone, so G3 is only the canvas approval).
@@ -272,16 +285,16 @@ Ask what the work is, classify it, and route it:
 | Docs drifting | `/ecc:update-docs`, `/ecc:update-codemaps` |
 | Next release | Stage 10 |
 
-The `orch-*` commands run their own gates, and their changes still go through a feature branch and a PR to `master`.
+The `orch-*` commands run their own gates, and their changes still go through a feature branch and a PR to the base branch.
 
 ## Stage F0: Feature preflight
 
 Executor: orchestrator. This replaces Stages 0–7 for an existing project. Do not run `bootstrap.sh`, `git init`, or `gh repo create`.
 
-1. Confirm this is a git repository with at least one commit. Record `base_branch` (default `master`) and `base_commit` from `git rev-parse HEAD`. Also check that the absolute project path contains no `/docs/` or `/design/` segment; either one makes the guard exempt every file. If it does, tell the human the guard will be ineffective and run `node <skill-dir>/assets/state.js set feature.guard=ineffective`.
+1. Confirm this is a git repository with at least one commit. Determine `base_branch` from the repository's default branch (`gh repo view --json defaultBranchRef --jq .defaultBranchRef.name`) or the human's answer, falling back to `master` only when neither is available; record `base_commit` from `git rev-parse HEAD`. Also check that the absolute project path contains no `/docs/` or `/design/` segment; either one makes the guard exempt every file. Remember whether the guard will be ineffective. **Do not write state yet** — the state file is created in step 7.
 2. Require a clean working tree (`git status --porcelain` is empty). If it is dirty, ask the human to commit, stash, or stop. Never stash or commit for them.
 3. Read `CLAUDE.md`, every `.claude/prds/*.prd.md`, every `.claude/plans/*.plan.md`, `design/DESIGN.md`, `design/flows.md`, and `.github/workflows/`. Detect the stack's test, lint, typecheck, and build commands. Ask the human for any command you cannot find.
-4. Run the baseline commands yourself. Save `H/F0-baseline.md` with the command, exit code, duration, and the last 50 lines of any failure. If the baseline is red, ask: fix first, proceed with the known failures recorded, or stop. Record the result and the human's choice, for example `node <skill-dir>/assets/state.js set feature.baseline_status=green`.
+4. Run the baseline commands yourself. Save `H/F0-baseline.md` with the command, exit code, duration, and the last 50 lines of any failure. If the baseline is red, ask: fix first, proceed with the known failures recorded, or stop. Remember the result and the human's choice; record them in step 8.
 5. Install the guard, then confirm it with `/ecc:hookify-list`:
 
 ```bash
@@ -290,15 +303,14 @@ bash <skill-dir>/assets/guard.sh install --mode feature
 
    Ensure these local-record paths are in `.gitignore` (append any missing): `.claude/*.local.md`, `.claude/settings.local.json`, `.claude/ecc-workflow/`. Without this, F5's `git add .` can commit the state directory.
 
-6. Verify CI on the base branch:
+6. Verify CI on the base branch and remember the latest run's conclusion and URL:
 
 ```bash
 gh run list --branch <base_branch> --limit 1 --json conclusion,url
 ```
 
-   If the latest run is green, record G4 as inherited with the run URL. If it is missing or red, offer Stage 7's ci-author and keep G4 pending.
-7. Ask whether to install the optional state snapshot hooks. On yes, run `node <skill-dir>/assets/state.js hooks install` and confirm `.claude/settings.local.json` is gitignored.
-8. Pick the next feature number (scan `.claude/features/` for `NN-*`, use the next free number) and a kebab-case slug. Create the state; when a greenfield state exists, this appends a milestone, saves `paused`, and resets G1–G3:
+   Do not record G4 yet — step 8 does that after the state exists.
+7. Pick the next feature number (scan `.claude/features/` for `NN-*`, use the next free number) and a kebab-case slug. Create the state; when a greenfield state exists, this appends a milestone, saves `paused`, and resets G1–G3:
 
 ```bash
 node <skill-dir>/assets/state.js init --mode feature \
@@ -306,7 +318,30 @@ node <skill-dir>/assets/state.js init --mode feature \
   --base-branch <base_branch> --base-commit <sha>
 ```
 
-9. Print the status block.
+8. Record the preflight results now that the state exists:
+
+```bash
+node <skill-dir>/assets/state.js set feature.guard=ineffective      # only if the path check failed
+node <skill-dir>/assets/state.js set feature.baseline_status=<green|red>
+node <skill-dir>/assets/state.js set feature.baseline_choice="<fix-first|proceed-with-known-failures|stop>"  # only when red
+```
+
+   Record G4 from the CI result. Green:
+
+```bash
+node <skill-dir>/assets/state.js gate G4 inherited --evidence "<run URL>"
+```
+
+   Missing or red:
+
+```bash
+node <skill-dir>/assets/state.js gate G4 pending
+```
+
+   In the missing-or-red case, offer Stage 7's ci-author and do not proceed until the human chooses.
+
+9. Ask whether to install the optional state snapshot hooks. On yes, run `node <skill-dir>/assets/state.js hooks install` and confirm `.claude/settings.local.json` is gitignored.
+10. Print the status block.
 
 Exit: clean tree, baseline recorded, guard active, CI checked, state at `F1`.
 
@@ -348,7 +383,14 @@ Run Stage 4 with these deltas: the preview-builder integrates the new screens an
 
 1. Dispatch **architect** only if the feature adds a component, contract, data model, migration, or security boundary. HANDOFF `H/F5-architecture.md`; ADRs stay `proposed`.
 2. Dispatch **planner**. READ: the spec, the existing plan, the ADRs, `design/flows.md`, `H/F0-baseline.md`. Use `state.milestone` as the new milestone number. It appends one new milestone and its slices to `.claude/plans/<name>.plan.md`, keeps existing slice ids and order, tags every new slice with `feature: <slug>`, and updates only the new milestone row of the PRD.
-3. Append the new slices to `state.slices`, preserving each slice's `feature: <slug>` tag; do not reorder existing slices. Set `stage: F6` and `current_slice` to the first new slice.
+3. Append the new slices with the importer (it matches by id and preserves each existing slice's `status`, `branch`, `issue`, and `pr`), then point at the first new slice:
+
+```bash
+node <skill-dir>/assets/state.js slices import <file>
+node <skill-dir>/assets/state.js set stage=F6 current_slice=<first-new-id>
+```
+
+   Keep each slice's `feature: <slug>` tag in the JSON; never reorder existing slices.
 4. **G3:** the same Plan Canvas loop as Stage 4 on the updated plan. On `approve`:
 
 ```bash
@@ -361,11 +403,11 @@ node <skill-dir>/assets/state.js gate G3 approved --evidence .claude/plans/<name
 ```
 
    Flip the new ADRs to `accepted` before committing.
-5. Create exactly one issue per new slice, titled `[<slice-id>] <title>`, and record the numbers in `state.slices`; this is required before F6. The G3 approval authorizes this batch. Never create a duplicate for a slice that already has one.
+5. Create exactly one issue per new slice, titled `[<slice-id>] <title>`, and record each number with `node <skill-dir>/assets/state.js slice <slice-id> issue=<n>`; this is required before F6. The G3 approval authorizes this batch. Never create a duplicate for a slice that already has one.
 
 ## Stage F6: Build and review the feature slices
 
-Run Stage 8 and Stage 9 for each slice tagged with this feature, in plan order. The branch, verification, review, PR, and G5 procedures are unchanged, except that `master` becomes `state.base_branch` and each PR body must contain `Closes #<issue>` and add `Part of feature: <slug>` next to it.
+Run Stage 8 and Stage 9 for each slice tagged with this feature, in plan order. The branch, verification, review, PR, and G5 procedures are unchanged; `<base-branch>` resolves to `state.base_branch`, and each PR body must contain `Closes #<issue>` and add `Part of feature: <slug>` next to it.
 
 ## Stage F7: Feature wrap-up
 
