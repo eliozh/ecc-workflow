@@ -61,9 +61,9 @@ Feature mode adds one orchestrator-only step: the F0 baseline. Run the project's
 | `feature <idea>` (alias `add`) | Add a feature to an existing project: F0 preflight, a new milestone in the existing plan, Stages 8–9 per slice, then back to the paused milestone. Requires a git repo with at least one commit. Refuse while another feature run is active. |
 | `status` | Print status only. Change nothing. |
 | `slice <id>` | Jump to that slice in Stage 8. Allowed only after G4. |
-| `goto <stage>` | Move **backward** to redo a stage (for example, back to 4 to change the preview, or to `F3` for a feature design change). Moving forward past an unapproved gate is never allowed. Reopening a stage resets the gates after it to `pending`. |
+| `goto <stage>` | Move **backward** to redo a stage (for example, back to 4 to change the preview, or to `F3` for a feature design change). Moving forward past an unapproved gate is never allowed. |
 
-`goto` is a manual state change: set `status=awaiting-gate`, run `state.js gate <id> pending` for every gate at or after the reopened stage, reinstall the guard with `guard.sh install --mode <mode>` when the target is before G3, and set `next_action`. In maintain mode, keep G4 `inherited` while CI and protection are still in place; otherwise re-ask.
+Run `node <skill-dir>/assets/state.js goto <stage>`; it refuses forward moves, resets the affected gates to `pending`, sets `status=awaiting-gate`, and reinstalls the guard when the target is before G3 (`--no-guard` skips that).
 
 ## Startup (every invocation)
 
@@ -84,12 +84,12 @@ node <skill-dir>/assets/state.js status --json
 gh auth status && command -v ecc-plan-canvas && git --version && node --version
 ```
 
-4. If `in_flight` is set, print it and its recovery line. Check whether the handoff exists and starts with a complete `Status:` header: if yes, read its `## Summary` and continue; if no, re-dispatch the recorded role with the same brief. Never assume a subagent finished because time passed. For a parallel dispatch, `in_flight.handoff` is the slice directory: check each expected `review-*.md` before re-dispatching.
+4. If `in_flight` is set, print it and its recovery line. Check every handoff in `in_flight.handoffs` (or `in_flight.handoff` when singular) and whether each starts with a complete `Status:` header: if yes, read the `## Summary` and continue; if no, re-dispatch the recorded roles with the same brief. Never assume a subagent finished because time passed.
 5. Print a status block of 10 lines or fewer: mode, stage, gate states, current slice, `in_flight`, next action.
 6. Load only the current stage. `<skill-dir>` is this skill's base directory. Feature mode uses `F0`–`F7`; the same pattern works:
 
 ```bash
-sed -n '/^## Stage N:/,/^## Stage /p' <skill-dir>/references/stages.md
+awk -v s='^## Stage N:' '$0 ~ s {p=1} p && /^## Stage / && $0 !~ s {exit} p' <skill-dir>/references/stages.md
 ```
 
 7. Follow it. Write state through `assets/state.js` after every step, before asking for a gate, and after a gate is answered.
@@ -146,7 +146,7 @@ sed -n '/^## Stage N:/,/^## Stage /p' <skill-dir>/references/stages.md
 }
 ```
 
-`feature`, `paused`, and `in_flight` are `null` when unused. `paused` snapshots the fields feature work can change: `mode`, `milestone`, `current_slice`, `next_action`, `stage`, `status`, `prd`, `plan`, `stack`, `repo`, and `gates`. `milestone_seq` is the highest milestone number allocated; feature runs increment it so repeated features never reuse a number. `next_action` is always one concrete sentence; a fresh session must be able to resume from it alone. `revision` is the optimistic-lock counter: an update built from a stale read is rejected. `gates.G5.slice` records which slice the approval covers, and `gates.*.evidence_hash` binds file evidence to its content.
+`feature`, `paused`, and `in_flight` are `null` when unused. A parallel dispatch adds `in_flight.roles` and `in_flight.handoffs` arrays; `role` and `handoff` remain the first entry. `paused` snapshots the fields feature work can change: `mode`, `milestone`, `current_slice`, `next_action`, `stage`, `status`, `prd`, `plan`, `stack`, `repo`, and `gates`. `milestone_seq` is the highest milestone number allocated; feature runs increment it so repeated features never reuse a number. `next_action` is always one concrete sentence; a fresh session must be able to resume from it alone. `revision` is the optimistic-lock counter: an update built from a stale read is rejected. `gates.G5.slice` records which slice the approval covers, and `gates.*.evidence_hash` binds file evidence to its content.
 
 ### State persistence
 
@@ -169,7 +169,7 @@ node <skill-dir>/assets/state.js end --next "<one concrete sentence>"
 node <skill-dir>/assets/state.js hooks install
 ```
 
-  Hooks snapshot the state on disk, not the orchestrator's in-memory intent, so `in_flight` remains the recovery source for a mid-step interruption. Remove them with `state.js hooks remove`.
+  Hooks snapshot the state on disk, not the orchestrator's in-memory intent, so `in_flight` remains the recovery source for a mid-step interruption. They do not summarize the conversation; keep `next_action` current before any session boundary. Remove them with `state.js hooks remove`.
 - If `state.json` is corrupt, do not overwrite it. Run `node <skill-dir>/assets/state.js restore` (or `restore <checkpoint-file>`) to bring back the newest valid checkpoint; it backs up the corrupt file first. Tell the human what the restored state lost.
 
 ## Handoff files
@@ -214,7 +214,7 @@ node <skill-dir>/assets/state.js begin --role <role> --step <step> --handoff <pa
 node <skill-dir>/assets/state.js end --next "<one concrete sentence>"
 ```
 
-  Parallel reviewers share one `begin`/`end` pair; list the roles in `--step` and pass the slice directory as `--handoff`. On resume, check each expected `review-*.md` before re-dispatching.
+  For parallel reviewers, use one `begin` with `--roles a,b` and `--handoffs h1,h2`; `end` clears them. On resume, check every recorded handoff before re-dispatching.
 - Run independent subagents in parallel in a single message (for example, all Stage 9 reviewers).
 - On resume, an `in_flight` role with a missing or incomplete handoff is re-dispatched, not assumed done.
 - When one returns, read its handoff's `Status` and `## Summary` only.

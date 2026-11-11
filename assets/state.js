@@ -17,10 +17,12 @@
  *   node state.js slice <id> key=value [key=value ...]
  *   node state.js slices import <file>
  *   node state.js milestone <n> <pending|in-progress|complete>
+ *   node state.js goto <stage> [--no-guard]
  *   node state.js gate <G1..G6> <pending|approved|n/a|inherited> [--evidence <path-or-url>] [--slice <slice-id>]
  *   node state.js verify
  *   node state.js restore [<checkpoint-file>]
- *   node state.js begin --role <role> [--step <step>] [--handoff <path>]
+ *   node state.js begin --role <role> [--roles <a,b>] [--step <step>]
+ *                       [--handoff <path>] [--handoffs <a,b>]
  *   node state.js end [--next "<next action>"]
  *   node state.js checkpoint [--auto]
  *   node state.js finish-feature
@@ -96,6 +98,13 @@ function isValidStage(value) {
 
 function isUrl(value) {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(String(value || ''));
+}
+
+function splitList(value) {
+  return String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function evidenceHash(root, evidence) {
@@ -650,18 +659,86 @@ function milestoneState(root, args) {
   return writeState(root, state, { label: `milestone-${key}` });
 }
 
-function beginState(root, opts = {}) {
-  if (!opts.role) fail('usage: begin --role <role> [--step <step>] [--handoff <path>]');
+function stageRank(stage) {
+  if (typeof stage === 'number') return stage;
+  const match = /^F([0-7])$/.exec(String(stage));
+  return match ? 100 + Number(match[1]) : null;
+}
+
+function gatesToReset(target) {
+  if (typeof target === 'number') {
+    if (target === 0) return ['G1', 'G2', 'G3', 'G4', 'G5', 'G6'];
+    if (target === 1) return ['G1', 'G2', 'G3', 'G5', 'G6'];
+    if (target <= 4) return ['G2', 'G3', 'G5', 'G6'];
+    if (target <= 5) return ['G3', 'G5', 'G6'];
+    if (target <= 7) return ['G4', 'G5', 'G6'];
+    if (target <= 9) return ['G5', 'G6'];
+    if (target <= 10) return ['G6'];
+    return [];
+  }
+  const feature = Number(String(target).slice(1));
+  if (feature === 0) return ['G1', 'G2', 'G3', 'G4', 'G5', 'G6'];
+  if (feature <= 2) return ['G1', 'G2', 'G3', 'G5', 'G6'];
+  if (feature <= 4) return ['G2', 'G3', 'G5', 'G6'];
+  if (feature <= 5) return ['G3', 'G5', 'G6'];
+  if (feature <= 6) return ['G5', 'G6'];
+  return ['G6'];
+}
+
+function gotoState(root, stage, opts = {}) {
+  if (stage === undefined) fail('usage: goto <stage> [--no-guard]');
+  const target = /^F[0-7]$/.test(String(stage)) ? String(stage) : Number(stage);
+  if (!isValidStage(target)) fail(`unknown stage: ${stage}`);
   const state = readState(root);
+  const currentRank = stageRank(state.stage);
+  const targetRank = stageRank(target);
+  if (currentRank === null || targetRank === null) {
+    fail(`cannot compare stage ${state.stage} with ${target}`);
+  }
+  if (targetRank > currentRank) fail(`goto only moves backward: ${state.stage} -> ${target}`);
+
+  const reset = gatesToReset(target);
+  const beforeG3 = typeof target === 'number'
+    ? target <= 5
+    : Number(String(target).slice(1)) <= 5;
+  if (beforeG3 && opts.guard !== false) {
+    const mode = state.mode === 'feature' ? 'feature' : 'greenfield';
+    const result = spawnSync(
+      'bash',
+      [path.join(__dirname, 'guard.sh'), 'install', '--mode', mode],
+      { cwd: root, stdio: 'ignore' },
+    );
+    if (result.status !== 0) fail('could not reinstall the guard; run guard.sh install and retry');
+  }
+
+  state.gates = state.gates || {};
+  for (const id of reset) state.gates[id] = { status: 'pending' };
+  state.stage = target;
+  state.status = 'awaiting-gate';
+  state.next_action = `Re-run Stage ${target}; re-approve ${reset.join(', ') || 'no gates'}`;
+  return writeState(root, state, { label: 'goto' });
+}
+
+function beginState(root, opts = {}) {
+  if (!opts.role && !opts.roles) {
+    fail('usage: begin --role <role> [--roles <a,b>] [--step <step>] [--handoff <path>] [--handoffs <a,b>]');
+  }
+  const state = readState(root);
+  const roles = splitList(opts.roles || opts.role);
+  const handoffs = splitList(opts.handoffs || opts.handoff);
   state.in_flight = {
-    role: opts.role,
+    role: roles[0] || null,
+    roles,
     step: opts.step || null,
-    handoff: opts.handoff || null,
+    handoff: handoffs[0] || null,
+    handoffs,
     started_at: now(),
   };
-  state.next_action = opts.handoff
-    ? `Read ${opts.handoff} if it exists and has a complete status header; otherwise re-dispatch ${opts.role}`
-    : `Re-dispatch ${opts.role} if it did not finish`;
+  const targets = handoffs.length ? handoffs.join(', ') : 'the handoff';
+  const who = roles.join(', ');
+  state.next_action = handoffs.length
+    ? `Read ${targets} if each exists and has a complete status header; otherwise re-dispatch ${who}`
+    : `Re-dispatch ${who} if it did not finish`;
   return writeState(root, state, { label: 'begin' });
 }
 
@@ -815,9 +892,14 @@ function summarize(state, root) {
   }
   if (state.in_flight) {
     const step = state.in_flight.step ? ` ${state.in_flight.step}` : '';
-    lines.push(`in_flight: ${state.in_flight.role}${step} started ${state.in_flight.started_at}`);
+    const roles = state.in_flight.roles || [state.in_flight.role].filter(Boolean);
+    const handoffs = state.in_flight.handoffs
+      || (state.in_flight.handoff ? [state.in_flight.handoff] : []);
     lines.push(
-      `recover: read ${state.in_flight.handoff || 'the handoff'} if complete, else re-dispatch ${state.in_flight.role}`,
+      `in_flight: ${roles.join(', ')}${step} started ${state.in_flight.started_at}`,
+    );
+    lines.push(
+      `recover: check ${handoffs.length ? handoffs.join(', ') : 'the handoff'} if complete, else re-dispatch ${roles.join(', ')}`,
     );
   }
   lines.push(`next: ${state.next_action || '-'}`);
@@ -834,10 +916,11 @@ function usage() {
     '  state.js slice <id> key=value [key=value ...]',
     '  state.js slices import <file>',
     '  state.js milestone <n> <pending|in-progress|complete>',
+    '  state.js goto <stage> [--no-guard]',
     '  state.js gate <G1..G6> <pending|approved|n/a|inherited> [--evidence <path-or-url>] [--slice <slice-id>]',
     '  state.js verify',
     '  state.js restore [<checkpoint-file>]',
-    '  state.js begin --role <role> [--step <step>] [--handoff <path>]',
+    '  state.js begin --role <role> [--roles <a,b>] [--step <step>] [--handoff <path>] [--handoffs <a,b>]',
     '  state.js end [--next "<next action>"]',
     '  state.js checkpoint [--auto]',
     '  state.js finish-feature',
@@ -884,6 +967,10 @@ function dispatch(argv) {
     }
     case 'milestone': {
       console.log(summarize(milestoneState(root, args), root));
+      return;
+    }
+    case 'goto': {
+      console.log(summarize(gotoState(root, args[0], { guard: opts['no-guard'] !== true }), root));
       return;
     }
     case 'gate': {
@@ -988,6 +1075,7 @@ module.exports = {
   updateSlice,
   importSlices,
   milestoneState,
+  gotoState,
   gateState,
   verifyGates,
   restoreState,

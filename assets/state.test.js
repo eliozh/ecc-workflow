@@ -282,6 +282,49 @@ test('hooks install creates a private settings file', () => {
   }
 });
 
+test('begin records parallel roles and handoffs', () => {
+  const dir = tempProject();
+  try {
+    state.initState(dir, { mode: 'greenfield', project: 'demo' });
+    state.beginState(dir, {
+      roles: 'code-reviewer,security-reviewer',
+      step: '9.1',
+      handoffs: 'S/review-code.md,S/review-security.md',
+    });
+    const current = state.readState(dir).in_flight;
+    assert.deepEqual(current.roles, ['code-reviewer', 'security-reviewer']);
+    assert.deepEqual(current.handoffs, ['S/review-code.md', 'S/review-security.md']);
+    assert.equal(current.role, 'code-reviewer');
+
+    state.endState(dir, { next: 'Merge findings' });
+    assert.equal(state.readState(dir).in_flight, null);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('goto resets affected gates and refuses forward moves', () => {
+  const dir = tempProject();
+  try {
+    state.initState(dir, { mode: 'greenfield', project: 'demo' });
+    state.setState(dir, ['stage=8']);
+    for (const id of ['G1', 'G2', 'G3', 'G4']) {
+      state.gateState(dir, [id, 'approved'], { evidence: `https://example.com/${id}` });
+    }
+
+    const moved = state.gotoState(dir, 4, { guard: false });
+    assert.equal(moved.stage, 4);
+    assert.equal(moved.status, 'awaiting-gate');
+    assert.equal(moved.gates.G1.status, 'approved');
+    assert.equal(moved.gates.G2.status, 'pending');
+    assert.equal(moved.gates.G3.status, 'pending');
+    assert.equal(moved.gates.G4.status, 'approved');
+    assert.throws(() => state.gotoState(dir, 10, { guard: false }), /only moves backward/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
 test('checkpoint writes a copy and keeps the directory bounded', () => {
   const dir = tempProject();
   try {

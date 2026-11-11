@@ -3,7 +3,7 @@
 Load one section at a time:
 
 ```bash
-sed -n '/^## Stage N:/,/^## Stage /p' <skill-dir>/references/stages.md
+awk -v s='^## Stage N:' '$0 ~ s {p=1} p && /^## Stage / && $0 !~ s {exit} p' <skill-dir>/references/stages.md
 ```
 
 `H` below means `.claude/ecc-workflow/handoffs`, and `S` means `.claude/ecc-workflow/slices/<slice-id>`. `<base-branch>` means `state.base_branch` (`master` for a greenfield project unless the human chose another name). Every subagent is briefed per `references/subagents.md`. Update state through `assets/state.js` after each numbered step.
