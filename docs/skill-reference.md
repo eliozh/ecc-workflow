@@ -155,6 +155,8 @@ You can stop at any point. Every state write is atomic and kept in `checkpoints/
 
 ## What it will ask you to confirm
 
+Every gate, clarifying question, and outward-action confirmation arrives through the `AskUserQuestion` tool, with the recommended option first and labeled `(Recommended)`. G2 and G3 are approved in Plan Canvas instead; free-form answers such as a repository name, version, or URL are asked in plain chat.
+
 Running the skill lets it create branches, commit, push `feat/*` branches, open PRs, and create the one issue per slice required by the workflow, for slices in your approved plan. It asks you **each time** before it:
 
 - creates the GitHub repository (you choose the name and visibility)

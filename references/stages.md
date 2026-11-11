@@ -14,6 +14,7 @@ Three sequences share this file:
 - **Feature:** Stages F0–F7, then back to the paused milestone.
 - **Shared:** 2, 3, 4, 5, 8, 9, and 10 are reused by feature mode; their procedures are unchanged unless an F-stage section says otherwise. Commands use `<base-branch>`, which resolves to `state.base_branch`.
 - **Autonomous mode:** when `state.review_mode` is `auto`, replace every “ask the human” and “explicit yes” with the recommended option, and record the gate with `--auto`. If the recommendation is to stop, fix first, re-run, or escalate, take that path instead of approving. `review_scope=all` also covers the outward confirmations; the default `gates` scope does not.
+- **Asking:** when a step says “ask the human”, ask with the `AskUserQuestion` tool, recommended option first and labeled `(Recommended)`. G2 and G3 stay in Plan Canvas; free-form answers such as a repository name, version, or URL stay in plain chat.
 
 ## Stage 0: Bootstrap
 

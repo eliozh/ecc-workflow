@@ -27,6 +27,7 @@ The human-readable version of this process is `WORKFLOW.md` (English) and `WORKF
 7. **Feature mode never re-initializes the project.** It starts from a clean, up-to-date base branch, records the baseline, and installs only the guard and the state hooks. It never runs `git init`, rewrites history, or changes repository settings without asking.
 8. **State writes go through `assets/state.js`.** Before every subagent dispatch, write `in_flight`; after it returns, clear it. If the session is interrupted, the next session resumes from `in_flight` and the handoff file. Never write `state.json` directly while a hook or another process may be reading it.
 9. **Every slice has one issue, and its PR closes it.** After G3 and once the repository exists (Stage 7 in greenfield; F5 in feature mode), create exactly one issue per approved slice before any slice work, titled `[<slice-id>] <title>`, and record the number with `assets/state.js slice <slice-id> issue=<n>`. Every PR body must contain `Closes #<issue>`. If the base branch is not the repository default branch, close the issue explicitly after the merge. The orchestrator runs these `gh` writes; subagents never do. The G3 plan approval authorizes the issue batch, so it needs no separate confirmation.
+10. **Ask with `AskUserQuestion` whenever you need an answer.** Every gate that is answered in chat, clarifying question, choice, and outward-facing confirmation goes through the `AskUserQuestion` tool: put the recommended option first, label it `(Recommended)`, and describe what each option does. Keep G2 and G3 in Plan Canvas, and keep free-form answers — a repository name, version, URL, or description — in plain chat when the tool cannot express them. In autonomous mode, answer the same prompt with the recommended option and record the gate with `--auto` as usual.
 
 ## Modes
 
@@ -253,6 +254,8 @@ node <skill-dir>/assets/state.js review auto --scope gates --reason "<the human'
 | G6 | Release deployed and checked | Audit results, post-deploy checks, rollback test | An explicit yes in chat |
 
 Feature mode reuses G1, G2, G3, and G5. G2 is `n/a` when the feature has no UI or output-format change, and F5 goes straight to G3. G4 is `inherited` after F0 verifies CI is green on the base branch; it is never re-asked. G6 is `n/a` unless the human asks for a release in F7.
+
+**Asking:** gates answered in chat (G1, G4, G5, G6), every clarifying question, and every outward-facing confirmation use `AskUserQuestion` with the recommended option first. G2 and G3 use Plan Canvas; free-form answers (repository name, visibility, version, URL) may stay in plain chat.
 
 ## Outward-facing actions
 

@@ -105,12 +105,12 @@ flowchart LR
 
 | Gate | A human approves | How |
 |---|---|---|
-| **G1** | Problem, users, measurable hypothesis, MVP, out of scope | Reply yes in chat |
+| **G1** | Problem, users, measurable hypothesis, MVP, out of scope | Confirm via `AskUserQuestion` |
 | **G2** | What the product looks like and how it flows | Annotate and click **Approve** in Plan Canvas |
 | **G3** | Stack, architecture decisions, slice order | Annotate and click **Approve** in Plan Canvas |
-| **G4** | CI green on the base branch, branch protection on | Reply yes |
-| **G5** | Each pull request — CI status and findings by severity | Reply "merge" |
-| **G6** | The release, running and verified, rollback rehearsed | Reply yes |
+| **G4** | CI green on the base branch, branch protection on | Confirm via `AskUserQuestion` |
+| **G5** | Each pull request — CI status and findings by severity | Reply `merge` via `AskUserQuestion` |
+| **G6** | The release, running and verified, rollback rehearsed | Confirm via `AskUserQuestion` |
 
 Every gate records its approval time and evidence path in the state file. A gate with no explicit human answer blocks the run.
 

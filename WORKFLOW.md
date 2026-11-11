@@ -44,7 +44,7 @@ flowchart TD
 | G5 | Each slice | Green CI, no open CRITICAL or HIGH findings, merged PR |
 | G6 | The running release | Production audit, post-deploy checks, tagged release |
 
-Agents stop at every gate and wait. Silence is not approval.
+Agents stop at every gate and wait. Silence is not approval. Whenever the agent needs an answer — a gate, a clarifying question, or an outward-action confirmation — it asks through the `AskUserQuestion` tool with the recommended option first, except G2 and G3, which you approve in Plan Canvas; free-form answers such as a repository name or version are asked in plain chat.
 
 ## Before your first project
 
