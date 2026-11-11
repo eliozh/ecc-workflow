@@ -127,7 +127,7 @@ At Stage 0 (greenfield) or F0 (feature), the skill installs two pre-approval **H
 The two pre-approval rules are removed automatically when G3 is approved — that is the exact moment code becomes legal. The state-writer rule stays installed so gate state only changes through `state.js`.
 
 > [!WARNING]
-> **The guard is a guardrail, not a lock.** It stops the agent's file edits and known scaffolders. It does not stop a shell redirect (`echo x > src/app.ts`), and it does not bind you. It is also local-only: Hookify rules must stay untracked, so a fresh clone does not carry them. Your gate approvals are the real control.
+> **The guard is a guardrail, not a lock.** It stops the agent's file edits and known scaffolders. It does not stop a shell redirect (`echo x > src/app.ts`), and it does not bind you. It is also local-only: Hookify rules must stay untracked, so a fresh clone does not carry them. The state-writer rule is separate and stays installed after G3. Your gate approvals are the real control.
 
 ## Feature mode
 

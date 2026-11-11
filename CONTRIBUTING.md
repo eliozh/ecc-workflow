@@ -5,7 +5,7 @@ Thanks for wanting to improve the workflow. This repository is a **Claude Code s
 ## Ground rules
 
 1. **The orchestrator stays small.** `SKILL.md` is loaded into the main session's context on every run. Prefer moving detail into `references/` or `assets/` and linking to it, over growing `SKILL.md`.
-2. **Stage procedures load one at a time.** `references/stages.md` is read with a `sed` range per stage. Keep every stage a self-contained `## Stage N:` section so that stays true.
+2. **Stage procedures load one at a time.** `references/stages.md` is read one stage at a time with the `awk` extractor in `SKILL.md`. Keep every stage a self-contained `## Stage N:` section so that stays true.
 3. **Gates are human-only.** Nothing in a skill change may let a subagent approve a gate, edit `state.json`, or run a git/`gh` write. Those boundaries are the product.
 4. **State writes go through `assets/state.js`.** New state fields need a `set`/`gate`/`begin`/`end` path, a checkpoint, and a test.
 5. **No secrets, no absolute personal paths.** Examples use placeholders such as `<owner>/<name>` and `<skill-dir>`.
@@ -32,9 +32,9 @@ bash -n assets/bootstrap.sh
 bash -n assets/guard.sh
 ```
 
-All 25 tests must pass. CI runs the same commands on every push and pull request to `main`.
+The full suite must pass. CI runs the same commands on every push and pull request to `main`.
 
-If you change behavior that a stage relies on, also update the matching section of `references/stages.md`, and `SKILL.md` if it states the rule.
+If you change behavior that a stage relies on, also update the matching section of `references/stages.md`, and `SKILL.md` if it states the rule. `SKILL.md` and `references/` are the operational source of truth; `WORKFLOW.md` and the READMEs are human-facing summaries, so update both when a rule changes.
 
 ## Repository map
 

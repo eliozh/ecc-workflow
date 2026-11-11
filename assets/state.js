@@ -172,6 +172,16 @@ function writeFileAtomic(file, body, mode = 0o600) {
     fs.closeSync(fd);
   }
   fs.renameSync(temp, file);
+  try {
+    const dirFd = fs.openSync(dir, 'r');
+    try {
+      fs.fsyncSync(dirFd);
+    } finally {
+      fs.closeSync(dirFd);
+    }
+  } catch (_) {
+    /* directory fsync is best effort */
+  }
 }
 
 function projectRoot() {
@@ -696,6 +706,7 @@ function gotoState(root, stage, opts = {}) {
     fail(`cannot compare stage ${state.stage} with ${target}`);
   }
   if (targetRank > currentRank) fail(`goto only moves backward: ${state.stage} -> ${target}`);
+  if (state.in_flight) fail('a dispatch is in flight; run state.js end first');
 
   const reset = gatesToReset(target);
   const beforeG3 = typeof target === 'number'
@@ -713,6 +724,10 @@ function gotoState(root, stage, opts = {}) {
 
   state.gates = state.gates || {};
   for (const id of reset) state.gates[id] = { status: 'pending' };
+  const beforeStage8 = typeof target === 'number'
+    ? target < 8
+    : Number(String(target).slice(1)) <= 5;
+  if (beforeStage8) state.current_slice = null;
   state.stage = target;
   state.status = 'awaiting-gate';
   state.next_action = `Re-run Stage ${target}; re-approve ${reset.join(', ') || 'no gates'}`;
@@ -871,6 +886,16 @@ function hooksStatus(root) {
   );
 }
 
+function hooksStale(root) {
+  const settings = loadSettings(root);
+  const current = hookCommand();
+  return HOOK_EVENTS.some((event) =>
+    (settings.hooks?.[event] || []).some((group) =>
+      (group.hooks || []).some((hook) => isOurHook(hook) && hook.command !== current),
+    ),
+  );
+}
+
 function summarize(state, root) {
   const gates = Object.entries(state.gates || {})
     .map(([id, gate]) => `${id} ${gate.status}${gate.slice ? ` (${gate.slice})` : ''}`)
@@ -1022,9 +1047,14 @@ function dispatch(argv) {
         console.log(`removed state snapshot hooks from ${settingsPath(root)}`);
       } else if (action === 'status') {
         const active = hooksStatus(root);
-        console.log(
-          active.length ? `state hooks active: ${active.join(', ')}` : 'state hooks not installed',
-        );
+        const stale = active.length > 0 && hooksStale(root);
+        if (active.length) {
+          console.log(
+            `state hooks active: ${active.join(', ')}${stale ? ' (stale path; run hooks install)' : ''}`,
+          );
+        } else {
+          console.log('state hooks not installed');
+        }
       } else {
         usage();
       }
@@ -1086,6 +1116,7 @@ module.exports = {
   installHooks,
   removeHooks,
   hooksStatus,
+  hooksStale,
   isOurHook,
   summarize,
   parseArgs,

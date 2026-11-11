@@ -517,7 +517,7 @@ Hooks only govern the agent. **CI is what enforces rules for everyone**, which i
 ```text
 .claude/prds/<name>.prd.md       requirements
 .claude/plans/<name>.plan.md     implementation plans
-.claude/hookify.*.local.md       code guard, untracked, removed at G3
+.claude/hookify.*.local.md       pre-approval guards (removed at G3) and state-writer guard (stays), untracked
 design/preview/index.html        approved UI contract
 design/DESIGN.md                 design rationale
 design/design-tokens.json        design tokens

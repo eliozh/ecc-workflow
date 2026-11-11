@@ -32,8 +32,8 @@ The human-readable version of this process is `WORKFLOW.md` (English) and `WORKF
 
 | Mode | Entry | Sequence | Guard |
 |---|---|---|---|
-| greenfield | `new <idea>` | Stages 0–11 | installed at Stage 0, removed at G3 |
-| feature | `feature <idea>` | F0–F7, then back to the paused milestone | installed at F0, removed at G3 |
+| greenfield | `new <idea>` | Stages 0–11 | installed at Stage 0; pre-approval rules removed at G3, state-writer rule stays |
+| feature | `feature <idea>` | F0–F7, then back to the paused milestone | installed at F0; pre-approval rules removed at G3, state-writer rule stays |
 
 Feature mode appends a milestone to the existing plan and pauses the current one. It does not scaffold, create a repository, or re-approve G4 when CI is already green. The full procedure is in `references/stages.md`, `## Stage F0`–`## Stage F7`.
 
@@ -169,7 +169,7 @@ node <skill-dir>/assets/state.js end --next "<one concrete sentence>"
 node <skill-dir>/assets/state.js hooks install
 ```
 
-  Hooks snapshot the state on disk, not the orchestrator's in-memory intent, so `in_flight` remains the recovery source for a mid-step interruption. They do not summarize the conversation; keep `next_action` current before any session boundary. Remove them with `state.js hooks remove`.
+  Hooks snapshot the state on disk, not the orchestrator's in-memory intent, so `in_flight` remains the recovery source for a mid-step interruption. They do not summarize the conversation; keep `next_action` current before any session boundary. `state.js hooks status` warns when the installed command points at a stale skill path; reinstall with `hooks install`. Remove them with `state.js hooks remove`.
 - If `state.json` is corrupt, do not overwrite it. Run `node <skill-dir>/assets/state.js restore` (or `restore <checkpoint-file>`) to bring back the newest valid checkpoint; it backs up the corrupt file first. Tell the human what the restored state lost.
 
 ## Handoff files

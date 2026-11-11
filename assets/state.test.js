@@ -282,6 +282,29 @@ test('hooks install creates a private settings file', () => {
   }
 });
 
+test('hooks status detects a stale command path', () => {
+  const dir = tempProject();
+  try {
+    state.installHooks(dir);
+    assert.equal(state.hooksStale(dir), false);
+
+    const settings = readJson(state.settingsPath(dir));
+    for (const event of ['PreCompact', 'Stop', 'SessionEnd']) {
+      for (const group of settings.hooks[event]) {
+        for (const hook of group.hooks) {
+          if (state.isOurHook(hook)) {
+            hook.command = "node '/old/skill/assets/state.js' checkpoint --auto # ecc-workflow-state";
+          }
+        }
+      }
+    }
+    fs.writeFileSync(state.settingsPath(dir), JSON.stringify(settings));
+    assert.equal(state.hooksStale(dir), true);
+  } finally {
+    cleanup(dir);
+  }
+});
+
 test('begin records parallel roles and handoffs', () => {
   const dir = tempProject();
   try {
@@ -307,7 +330,7 @@ test('goto resets affected gates and refuses forward moves', () => {
   const dir = tempProject();
   try {
     state.initState(dir, { mode: 'greenfield', project: 'demo' });
-    state.setState(dir, ['stage=8']);
+    state.setState(dir, ['stage=8', 'current_slice=18-x']);
     for (const id of ['G1', 'G2', 'G3', 'G4']) {
       state.gateState(dir, [id, 'approved'], { evidence: `https://example.com/${id}` });
     }
@@ -315,10 +338,15 @@ test('goto resets affected gates and refuses forward moves', () => {
     const moved = state.gotoState(dir, 4, { guard: false });
     assert.equal(moved.stage, 4);
     assert.equal(moved.status, 'awaiting-gate');
+    assert.equal(moved.current_slice, null);
     assert.equal(moved.gates.G1.status, 'approved');
     assert.equal(moved.gates.G2.status, 'pending');
     assert.equal(moved.gates.G3.status, 'pending');
     assert.equal(moved.gates.G4.status, 'approved');
+
+    state.beginState(dir, { role: 'implementer' });
+    assert.throws(() => state.gotoState(dir, 4, { guard: false }), /dispatch is in flight/);
+    state.endState(dir, { next: 'Resume' });
     assert.throws(() => state.gotoState(dir, 10, { guard: false }), /only moves backward/);
   } finally {
     cleanup(dir);

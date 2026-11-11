@@ -157,7 +157,7 @@ Running the skill lets it create branches, commit, push `feat/*` branches, open 
 ## Limits
 
 - **Two modes.** `new` starts from an empty folder; `feature` adds a milestone to an existing project. Small changes that don't need the full flow can still use `/ecc:orch-add-feature`, `/ecc:orch-fix-defect`, or `/ecc:orch-change-feature`.
-- **The guard is a guardrail, not a lock.** It stops the agent's file edits and known scaffolders, not shell redirects or anything you do yourself. Your gate approvals are the real control.
+- **The guard is a guardrail, not a lock.** It stops the agent's file edits and known scaffolders, not shell redirects or anything you do yourself. Your gate approvals are the real control. The separate state-writer rule keeps `state.json`, local settings, and guard files on their helpers; it stays installed after G3.
 - **The guard is local.** Hookify rules must stay untracked, so a fresh clone doesn't have them.
 - **Snapshot hooks are local.** They live in `.claude/settings.local.json`, which is gitignored. Moving the skill folder breaks their absolute path; reinstall with `state.js hooks install`.
 - **Some GitHub settings are manual.** Secret scanning, push protection, Dependabot alerts, and CodeQL are enabled by you in the repository settings. Branch protection may be unavailable for private repositories on the free plan.

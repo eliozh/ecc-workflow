@@ -517,7 +517,7 @@ flowchart LR
 ```text
 .claude/prds/<name>.prd.md       requirements
 .claude/plans/<name>.plan.md     implementation plans
-.claude/hookify.*.local.md       code guard, untracked, removed at G3
+.claude/hookify.*.local.md       pre-approval 护栏（G3 时移除）与 state-writer 护栏（保留），未跟踪
 design/preview/index.html        approved UI contract
 design/DESIGN.md                 design rationale
 design/design-tokens.json        design tokens
