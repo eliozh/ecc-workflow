@@ -219,7 +219,26 @@ gh pr merge <n> --squash --delete-branch
 git switch master && git pull --ff-only
 ```
 
-Set the slice to `merged`. Next pending slice: back to Stage 8. Milestone done but the PRD has more pending milestones: mark the milestone `complete`, then run Stage 5 steps 3–6 for the next milestone (planner, slice list, G3, then slice issues; the guard is gone, so G3 is only the canvas approval). All MVP milestones done: Stage 10.
+Set the slice to `merged` and clear the slice point in one write:
+
+```bash
+node <skill-dir>/assets/state.js gate G5 approved --evidence "<PR URL>"
+node <skill-dir>/assets/state.js set slices.<index>.status=merged current_slice=null status=in-progress
+```
+
+`<index>` is the slice's zero-based position in `state.slices`. Then set `next_action` for the route that applies:
+
+- **Next pending slice:** `next_action` = `Start slice <next-id>: branch feat/<next-id> from <base-branch> and dispatch implementer with slices/<next-id>/brief.md`. Back to Stage 8.
+- **Milestone done but the PRD has more pending milestones:** mark the milestone `complete`, set `next_action` to the next planning step, then run Stage 5 steps 3–6 for the next milestone (planner, slice list, G3, then slice issues; the guard is gone, so G3 is only the canvas approval).
+- **All MVP milestones done:** `node <skill-dir>/assets/state.js set stage=10 next_action="Run Stage 10: dispatch release-auditor three times in parallel"`.
+
+Close-out check before ending the session or running `/compact`:
+
+```bash
+node <skill-dir>/assets/state.js status
+```
+
+`in_flight` must be `null` and `next_action` must name the exact next step. Anything the next session needs that exists only in this conversation — a deferred MEDIUM, an accepted risk, a scope change — belongs in `S/findings.md` or `next_action` now: a new session and `/compact` keep what is on disk, not what was said.
 
 ## Stage 10: Release
 
