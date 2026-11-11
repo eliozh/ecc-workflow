@@ -134,6 +134,10 @@ What the guard does and doesn't do:
 
 **Exit:** all three rules appear in `/hookify-list`.
 
+## Autonomous mode
+
+If you explicitly opt out of review, record it with `state.js review auto --reason "<your words>"`. Gates and questions then use the recommended option and are marked `--auto`; the run still stops when the recommendation is to fix, re-run, or stop. `--scope all` also covers the outward confirmations. `review human` restores manual approval.
+
 ## Stage 1: PRD
 
 **Goal:** agree on what must be true and why, with no implementation detail.

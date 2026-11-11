@@ -1,6 +1,6 @@
 # Subagent contract
 
-Every subagent gets one bounded task, reads its inputs from files, writes its results to files, and returns a short summary. It never talks to the human and never decides a gate.
+Every subagent gets one bounded task, reads its inputs from files, writes its results to files, and returns a short summary. It never talks to the human and never decides a gate. Autonomous mode never changes that: the orchestrator answers the prompt and records the gate; a subagent still never approves one or takes an outward action.
 
 ## Brief template
 

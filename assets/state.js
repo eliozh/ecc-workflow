@@ -17,6 +17,7 @@
  *   node state.js slice <id> key=value [key=value ...]
  *   node state.js slices import <file>
  *   node state.js milestone <n> <pending|in-progress|complete>
+ *   node state.js review <human|auto> [--scope gates|all] [--reason "<why>"]
  *   node state.js goto <stage> [--no-guard]
  *   node state.js gate <G1..G6> <pending|approved|n/a|inherited> [--evidence <path-or-url>] [--slice <slice-id>]
  *   node state.js verify
@@ -43,7 +44,19 @@ const HOOK_MARKER = 'ecc-workflow-state';
 const HOOK_EVENTS = ['PreCompact', 'Stop', 'SessionEnd'];
 const VALID_STATUSES = new Set(['in-progress', 'awaiting-gate', 'blocked', 'done']);
 const VALID_MODES = new Set(['greenfield', 'feature', 'maintain']);
-const PROTECTED_KEYS = new Set(['version', 'revision', 'updated_at', 'gates', 'in_flight']);
+const VALID_REVIEW_MODES = new Set(['human', 'auto']);
+const VALID_REVIEW_SCOPES = new Set(['gates', 'all']);
+const PROTECTED_KEYS = new Set([
+  'version',
+  'revision',
+  'updated_at',
+  'gates',
+  'in_flight',
+  'review_mode',
+  'review_scope',
+  'review_reason',
+  'review_set_at',
+]);
 const SETTABLE_KEYS = new Set([
   'project',
   'base_branch',
@@ -239,6 +252,8 @@ function readState(root, { required = true } = {}) {
   }
   state.mode = state.mode || 'greenfield';
   state.revision = state.revision ?? 0;
+  state.review_mode = state.review_mode || 'human';
+  state.review_scope = state.review_scope || 'gates';
   state.in_flight = state.in_flight ?? null;
   return state;
 }
@@ -381,6 +396,8 @@ function initState(root, opts = {}) {
       project: opts.project || path.basename(root),
       base_branch: baseBranch,
       mode,
+      review_mode: 'human',
+      review_scope: 'gates',
       stage: mode === 'feature' ? 'F1' : 1,
       status: 'in-progress',
       gates: {
@@ -576,7 +593,7 @@ function gateState(root, args, opts = {}) {
   const [id, status] = args;
   if (!id || !status) {
     fail(
-      'usage: gate <G1..G6> <pending|approved|n/a|inherited> [--evidence <path-or-url>] [--slice <slice-id>]',
+      'usage: gate <G1..G6> <pending|approved|n/a|inherited> [--evidence <path-or-url>] [--slice <slice-id>] [--auto]',
     );
   }
   if (!/^G[1-6]$/.test(id)) fail(`unknown gate: ${id}`);
@@ -584,6 +601,14 @@ function gateState(root, args, opts = {}) {
     fail(`unknown gate status: ${status}`);
   }
   const state = readState(root);
+  if (opts.auto) {
+    if (state.review_mode !== 'auto') {
+      fail('--auto requires review_mode=auto; run state.js review auto first');
+    }
+    if (status !== 'approved' && status !== 'inherited') {
+      fail('--auto only applies to approved or inherited gates');
+    }
+  }
   if (opts.slice) {
     const slices = Array.isArray(state.slices) ? state.slices : [];
     if (!slices.some((slice) => slice && slice.id === opts.slice)) {
@@ -604,11 +629,14 @@ function gateState(root, args, opts = {}) {
     const hash = evidenceHash(root, opts.evidence);
     if (hash) next.evidence_hash = hash;
     else delete next.evidence_hash;
+    if (opts.auto) next.auto = true;
+    else delete next.auto;
     if (opts.slice) next.slice = opts.slice;
   } else {
     delete next.at;
     delete next.evidence;
     delete next.evidence_hash;
+    delete next.auto;
     if (opts.slice) next.slice = opts.slice;
     else delete next.slice;
   }
@@ -667,6 +695,27 @@ function milestoneState(root, args) {
   const record = status === 'pending' ? { status } : { status, at: now() };
   state.milestones = { ...(state.milestones || {}), [key]: record };
   return writeState(root, state, { label: `milestone-${key}` });
+}
+
+function reviewState(root, args, opts = {}) {
+  const [mode] = args;
+  if (!mode) fail('usage: review <human|auto> [--scope gates|all] [--reason "<why>"]');
+  if (!VALID_REVIEW_MODES.has(mode)) fail(`unknown review mode: ${mode}`);
+  const scope = opts.scope || 'gates';
+  if (!VALID_REVIEW_SCOPES.has(scope)) fail(`unknown review scope: ${scope}`);
+  if (mode === 'human' && scope !== 'gates') fail('human review only supports scope=gates');
+  const state = readState(root);
+  state.review_mode = mode;
+  state.review_scope = mode === 'auto' ? scope : 'gates';
+  if (mode === 'auto') {
+    if (!opts.reason) fail('review auto needs --reason "<the human instruction>"');
+    state.review_reason = opts.reason;
+    state.review_set_at = now();
+  } else {
+    delete state.review_reason;
+    delete state.review_set_at;
+  }
+  return writeState(root, state, { label: `review-${mode}` });
 }
 
 function stageRank(stage) {
@@ -903,6 +952,7 @@ function summarize(state, root) {
   const lines = [];
   const label = state.feature ? `${state.mode} (${state.feature.slug})` : state.mode;
   lines.push(`mode: ${label}`);
+  lines.push(`review: ${state.review_mode}${state.review_mode === 'auto' ? ` (${state.review_scope})` : ''}`);
   lines.push(`stage: ${state.stage}  status: ${state.status}`);
   lines.push(`gates: ${gates}`);
   if (root) {
@@ -941,6 +991,7 @@ function usage() {
     '  state.js slice <id> key=value [key=value ...]',
     '  state.js slices import <file>',
     '  state.js milestone <n> <pending|in-progress|complete>',
+    '  state.js review <human|auto> [--scope gates|all] [--reason "<why>"]',
     '  state.js goto <stage> [--no-guard]',
     '  state.js gate <G1..G6> <pending|approved|n/a|inherited> [--evidence <path-or-url>] [--slice <slice-id>]',
     '  state.js verify',
@@ -992,6 +1043,10 @@ function dispatch(argv) {
     }
     case 'milestone': {
       console.log(summarize(milestoneState(root, args), root));
+      return;
+    }
+    case 'review': {
+      console.log(summarize(reviewState(root, args, opts), root));
       return;
     }
     case 'goto': {
@@ -1105,6 +1160,7 @@ module.exports = {
   updateSlice,
   importSlices,
   milestoneState,
+  reviewState,
   gotoState,
   gateState,
   verifyGates,

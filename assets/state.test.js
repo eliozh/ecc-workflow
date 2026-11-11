@@ -170,6 +170,7 @@ test('set rejects protected keys and invalid values', () => {
     state.initState(dir, { mode: 'greenfield', project: 'demo' });
     assert.throws(() => state.setState(dir, ['gates.G1.status=approved']), /own command/);
     assert.throws(() => state.setState(dir, ['in_flight=null']), /own command/);
+    assert.throws(() => state.setState(dir, ['review_mode=auto']), /own command/);
     assert.throws(() => state.setState(dir, ['stgae=8']), /unknown state key/);
     assert.throws(() => state.setState(dir, ['stage=99']), /unknown stage/);
     assert.throws(() => state.setState(dir, ['status=nope']), /unknown status/);
@@ -348,6 +349,35 @@ test('goto resets affected gates and refuses forward moves', () => {
     assert.throws(() => state.gotoState(dir, 4, { guard: false }), /dispatch is in flight/);
     state.endState(dir, { next: 'Resume' });
     assert.throws(() => state.gotoState(dir, 10, { guard: false }), /only moves backward/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('review auto records the opt-in and gates can use --auto', () => {
+  const dir = tempProject();
+  try {
+    state.initState(dir, { mode: 'greenfield', project: 'demo' });
+    assert.throws(
+      () => state.gateState(dir, ['G1', 'approved'], { evidence: 'https://e/G1', auto: true }),
+      /requires review_mode=auto/,
+    );
+    assert.throws(() => state.reviewState(dir, ['auto']), /needs --reason/);
+
+    const auto = state.reviewState(dir, ['auto'], { reason: 'human said no review', scope: 'all' });
+    assert.equal(auto.review_mode, 'auto');
+    assert.equal(auto.review_scope, 'all');
+    assert.equal(auto.review_reason, 'human said no review');
+    assert.match(auto.review_set_at, /^\d{4}-/);
+
+    state.gateState(dir, ['G1', 'approved'], { evidence: 'https://e/G1', auto: true });
+    assert.equal(state.readState(dir).gates.G1.auto, true);
+    assert.throws(() => state.reviewState(dir, ['nope']), /unknown review mode/);
+
+    const human = state.reviewState(dir, ['human']);
+    assert.equal(human.review_mode, 'human');
+    assert.equal(human.review_scope, 'gates');
+    assert.equal(human.review_reason, undefined);
   } finally {
     cleanup(dir);
   }

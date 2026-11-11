@@ -134,6 +134,10 @@ git add -A && git commit -m "chore: bootstrap repository"
 
 **出口条件：** 三条规则都出现在 `/hookify-list` 中。
 
+## 自主模式
+
+如果你明确选择不做人工审核，用 `state.js review auto --reason "<你的原话>"` 记录。之后闸门和问题都使用推荐方案并以 `--auto` 标记；如果推荐是修复、重跑或停止，流程仍然照做。`--scope all` 还会覆盖对外操作的确认。`review human` 恢复人工审批。
+
 ## 第 1 阶段：PRD
 
 **目标：** 就"必须实现什么"和"为什么"达成一致，不涉及任何实现细节。

@@ -129,6 +129,18 @@ The two pre-approval rules are removed automatically when G3 is approved — tha
 > [!WARNING]
 > **The guard is a guardrail, not a lock.** It stops the agent's file edits and known scaffolders. It does not stop a shell redirect (`echo x > src/app.ts`), and it does not bind you. It is also local-only: Hookify rules must stay untracked, so a fresh clone does not carry them. The state-writer rule is separate and stays installed after G3. Your gate approvals are the real control.
 
+## Autonomous mode
+
+If you explicitly tell the skill that you do not want to review anything, it can answer its own gates with the recommended option:
+
+```bash
+node <skill-dir>/assets/state.js review auto --scope gates --reason "<your instruction>"
+```
+
+- `gates` (default): auto-answer gates and clarifying questions with the recommendation. It still stops when the recommendation is to fix, re-run, or stop.
+- `all`: the recorded opt-in also covers the outward-facing actions in the skill's confirmation list. Use it when your instruction covers merges, releases, deploys, repo settings, or deletions; use the default when you only mean gate approvals.
+- `review human` restores manual approval. Auto-approved gates carry `auto: true` and the recorded reason; a gate whose criteria fail is never auto-approved.
+
 ## Feature mode
 
 `/ecc-workflow feature <idea>` appends a milestone to the existing plan, pauses the current one, and reuses the same gates. It never scaffolds, never creates a repository, and never rewrites history.

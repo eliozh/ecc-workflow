@@ -19,7 +19,7 @@ The human-readable version of this process is `WORKFLOW.md` (English) and `WORKF
 ## Hard rules
 
 1. **No application code before G2 and G3.** Stage 0 (greenfield) or F0 (feature) installs a Hookify guard that blocks code writes and scaffolders. Never work around it: no shell redirects, no disabling hooks, no `ECC_GATEGUARD=off`. If the guard blocks you before G3, the correct response is to stop.
-2. **Gates need explicit human approval in this session.** Silence, "looks fine so far", or a subagent's opinion is not approval. Before asking, set `status=awaiting-gate`; after the answer, set it back to `in-progress` (or `blocked`). Record every approval with `assets/state.js gate <id> approved --evidence <path-or-url>`; a gate without evidence does not count.
+2. **Gates need explicit human approval in this session.** Silence, "looks fine so far", or a subagent's opinion is not approval. Before asking, set `status=awaiting-gate`; after the answer, set it back to `in-progress` (or `blocked`). Record every approval with `assets/state.js gate <id> approved --evidence <path-or-url>`; a gate without evidence does not count. **Exception:** when the human has explicitly opted into autonomous mode with `assets/state.js review auto --reason "<their instruction>"`, that recorded opt-in is the approval — use the recommended option and add `--auto` to the gate. Never auto-approve a gate whose criteria fail.
 3. **You do only what the role table below assigns to the orchestrator.** All other work goes to a subagent briefed per `references/subagents.md`. One exception: you may make a trivial edit yourself (about 10 lines or fewer in a doc or state file) when spawning a subagent would cost more than the edit.
 4. **Keep your context small.** Load only the current stage's section of `references/stages.md`. Read the `## Summary` section of a handoff, not the whole file, unless you need a detail. Never paste subagent output or large files into the conversation.
 5. **Feature branches from the start of development.** From Stage 8 on, every change goes `feat/<slice>` → PR → the base branch. The base branch is `state.base_branch` (`master` for greenfield unless the human chose another name); always pass it explicitly (`/ecc:pr <base-branch>`).
@@ -102,6 +102,10 @@ awk -v s='^## Stage N:' '$0 ~ s {p=1} p && /^## Stage / && $0 !~ s {exit} p' <sk
 {
   "version": 2,
   "revision": 7,
+  "review_mode": "human | auto",
+  "review_scope": "gates | all",
+  "review_reason": "recorded only in auto mode",
+  "review_set_at": "2026-11-04T10:00:00.000Z",
   "project": "my-app",
   "base_branch": "master",
   "mode": "greenfield | feature | maintain",
@@ -146,7 +150,7 @@ awk -v s='^## Stage N:' '$0 ~ s {p=1} p && /^## Stage / && $0 !~ s {exit} p' <sk
 }
 ```
 
-`feature`, `paused`, and `in_flight` are `null` when unused. A parallel dispatch adds `in_flight.roles` and `in_flight.handoffs` arrays; `role` and `handoff` remain the first entry. `paused` snapshots the fields feature work can change: `mode`, `milestone`, `current_slice`, `next_action`, `stage`, `status`, `prd`, `plan`, `stack`, `repo`, and `gates`. `milestone_seq` is the highest milestone number allocated; feature runs increment it so repeated features never reuse a number. `next_action` is always one concrete sentence; a fresh session must be able to resume from it alone. `revision` is the optimistic-lock counter: an update built from a stale read is rejected. `gates.G5.slice` records which slice the approval covers, and `gates.*.evidence_hash` binds file evidence to its content.
+`feature`, `paused`, and `in_flight` are `null` when unused. A parallel dispatch adds `in_flight.roles` and `in_flight.handoffs` arrays; `role` and `handoff` remain the first entry. `paused` snapshots the fields feature work can change: `mode`, `milestone`, `current_slice`, `next_action`, `stage`, `status`, `prd`, `plan`, `stack`, `repo`, and `gates`. `milestone_seq` is the highest milestone number allocated; feature runs increment it so repeated features never reuse a number. `next_action` is always one concrete sentence; a fresh session must be able to resume from it alone. `revision` is the optimistic-lock counter: an update built from a stale read is rejected. `review_mode`/`review_scope` record the autonomous opt-in, and every gate auto-approved under it has `auto: true`. `gates.G5.slice` records which slice the approval covers, and `gates.*.evidence_hash` binds file evidence to its content.
 
 ### State persistence
 
@@ -223,6 +227,20 @@ node <skill-dir>/assets/state.js end --next "<one concrete sentence>"
   - `blocked`: re-dispatch with a narrower brief at most twice, then escalate to the human.
 - Reviewers write the full report to their handoff when their toolset allows it; otherwise they return only the findings table. Save that table to the handoff path and read it for the fixer brief. Do not pull a full reviewer report into this session.
 
+## Autonomous mode
+
+When the human explicitly says they do not need any manual review, record that instruction instead of asking again:
+
+```bash
+node <skill-dir>/assets/state.js review auto --scope gates --reason "<the human's words>"
+```
+
+- `--scope gates` (default): answer every gate and clarifying question with the recommended option. If the recommendation is to stop, fix first, re-run a stage, or escalate, take that path — do not approve the gate just to keep moving.
+- `--scope all`: the recorded opt-in also covers the outward-facing actions in the confirmation list below. Record the action and its evidence as usual. Use `all` when the human's instruction covers merges, releases, deploys, repo settings, or deletions; use the default when they only mean gate approvals.
+- Turn it off with `node <skill-dir>/assets/state.js review human`.
+- Auto mode changes who answers the prompt, not who records the decision: the orchestrator still runs `gate ... --auto`, and subagents never approve gates or take outward actions.
+- Every auto-approved gate keeps `auto: true` and the recorded review reason, so the audit trail shows what was automated.
+
 ## Gates
 
 | Gate | When | Ask the human with | Approval is |
@@ -240,7 +258,7 @@ Feature mode reuses G1, G2, G3, and G5. G2 is `n/a` when the feature has no UI o
 
 Running `/ecc-workflow` authorizes you, for slices in the approved plan, to create local branches, make local commits, push `feat/*` branches, open PRs against the base branch, and create the one issue per slice required by hard rule 9 once the repository exists. In feature mode, the approved plan is the existing plan with the new milestone added, and the repository already exists, so `gh repo create` is never part of the flow.
 
-These need the human's explicit confirmation **each time**: `gh repo create`, changing branch protection or repo settings, creating issues outside the approved slice batch (edits, deletions, epics, extra issues), merging a PR, pushing to the base branch after protection is on, tags and releases, deploys, deleting anything, and writing anywhere under `~/.claude`.
+These need the human's explicit confirmation **each time**: `gh repo create`, changing branch protection or repo settings, creating issues outside the approved slice batch (edits, deletions, epics, extra issues), merging a PR, pushing to the base branch after protection is on, tags and releases, deploys, deleting anything, and writing anywhere under `~/.claude`. With `review_scope=all`, the recorded autonomous-mode instruction covers these; with the default `gates` scope, they still need explicit confirmation.
 
 ## Failure handling
 
