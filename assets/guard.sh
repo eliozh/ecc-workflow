@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# ecc-workflow guard: install, remove, or report the pre-approval Hookify rules.
-# Run from the project root. Both modes install both rules; the scaffold rule is
-# inert when no scaffolding happens.
+# ecc-workflow guard: install, remove, or report the Hookify rules.
+# Run from the project root. Both modes install three rules: two pre-approval
+# rules and one state-writer rule. `remove` keeps the state-writer rule; use
+# `remove --all` to remove every rule.
 set -euo pipefail
 
 CODE_RULE=".claude/hookify.block-code-before-approval.local.md"
 SCAFFOLD_RULE=".claude/hookify.block-scaffold-before-approval.local.md"
+STATE_RULE=".claude/hookify.block-state-writes.local.md"
 
 usage() {
-  echo "usage: guard.sh <install|remove|status> [--mode greenfield|feature]" >&2
+  echo "usage: guard.sh <install|remove|status> [--mode greenfield|feature] [--all]" >&2
   exit 2
 }
 
@@ -19,6 +21,7 @@ case "$action" in
 esac
 
 mode="greenfield"
+all=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --mode)
@@ -26,6 +29,7 @@ while [ "$#" -gt 0 ]; do
       if [ "$mode" != "greenfield" ] && [ "$mode" != "feature" ]; then usage; fi
       shift 2
       ;;
+    --all) all=1; shift ;;
     *) usage ;;
   esac
 done
@@ -78,12 +82,31 @@ pattern: (npm|pnpm|yarn|bun)\s+(create|init)\b|npx\s+\S*create-|cargo\s+(new|ini
 ---
 BLOCKED by the project workflow: no scaffolding until gates G2 (HTML preview) and G3 (plan) are approved. Ask the human for approval. Do not work around this rule.
 RULE
+  write_rule "$STATE_RULE" <<'RULE'
+---
+name: block-state-writes
+enabled: true
+event: file
+action: block
+conditions:
+  - field: file_path
+    operator: regex_match
+    pattern: (ecc-workflow/state\.json|settings\.local\.json|hookify\..*\.local\.md)$
+---
+BLOCKED by the project workflow: gate state, local settings, and guard rules are written only through their helpers (state.js / guard.sh). Do not edit them directly.
+RULE
   echo "ecc-workflow guard: installed ($mode mode)"
 }
 
 remove_rules() {
   local removed=0
-  for file in "$CODE_RULE" "$SCAFFOLD_RULE"; do
+  local files=("$CODE_RULE" "$SCAFFOLD_RULE")
+  if [ "$all" -eq 1 ]; then
+    files+=("$STATE_RULE")
+  else
+    echo "ecc-workflow guard: kept $STATE_RULE (state-writer guard; use --all to remove)"
+  fi
+  for file in "${files[@]}"; do
     if [ -e "$file" ]; then
       rm -f "$file"
       removed=$((removed + 1))
@@ -93,7 +116,7 @@ remove_rules() {
 }
 
 status_rules() {
-  for file in "$CODE_RULE" "$SCAFFOLD_RULE"; do
+  for file in "$CODE_RULE" "$SCAFFOLD_RULE" "$STATE_RULE"; do
     if [ -e "$file" ]; then
       echo "active: $file"
     else

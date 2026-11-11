@@ -19,7 +19,7 @@
 > [!IMPORTANT]
 > **The one rule:** no application code exists until a human has approved an HTML preview of the product and the implementation plan derived from it.
 >
-> Two Hookify rules block code writes and scaffolders mechanically until that plan is approved. Six named gates hold everything else. Silence is never approval.
+> Two Hookify rules block code writes and scaffolders mechanically until that plan is approved; a third keeps the workflow state and local settings on their helpers. Six named gates hold everything else. Silence is never approval.
 
 ## Why this exists
 
@@ -116,14 +116,15 @@ Every gate records its approval time and evidence path in the state file. A gate
 
 ## What actually stops the code
 
-At Stage 0 (greenfield) or F0 (feature), the skill installs two **Hookify** rules into the project:
+At Stage 0 (greenfield) or F0 (feature), the skill installs two pre-approval **Hookify** rules and one state-writer rule into the project:
 
 | Rule | Blocks | Until |
 |---|---|---|
 | `block-code-before-approval` | Write/Edit of anything outside `design/`, `docs/`, `.claude/`, Markdown, and `.gitignore` | G2 and G3 are approved |
 | `block-scaffold-before-approval` | `npm create`, `cargo new`, `uv init`, `rails new`, `flutter create`, and other scaffolders | G2 and G3 are approved |
+| `block-state-writes` | Write/Edit of `.claude/ecc-workflow/state.json`, `.claude/settings.local.json`, and `.claude/hookify.*.local.md` | Never lifted at G3; remove with `guard.sh remove --all` |
 
-They are removed automatically when G3 is approved — that is the exact moment code becomes legal.
+The two pre-approval rules are removed automatically when G3 is approved — that is the exact moment code becomes legal. The state-writer rule stays installed so gate state only changes through `state.js`.
 
 > [!WARNING]
 > **The guard is a guardrail, not a lock.** It stops the agent's file edits and known scaffolders. It does not stop a shell redirect (`echo x > src/app.ts`), and it does not bind you. It is also local-only: Hookify rules must stay untracked, so a fresh clone does not carry them. Your gate approvals are the real control.
@@ -209,7 +210,7 @@ The skill runs only when you invoke it. `disable-model-invocation: true` means C
 
 ```text
 .claude/ecc-workflow/            local workflow state, handoffs, checkpoints   (gitignored)
-.claude/hookify.*.local.md       pre-approval guard, removed at G3            (gitignored)
+.claude/hookify.*.local.md       pre-approval guards (removed at G3) and state-writer guard (stays) (gitignored)
 .claude/settings.local.json      optional state snapshot hooks                (gitignored)
 .claude/prds/<name>.prd.md       requirements                                 (committed)
 .claude/plans/<name>.plan.md     implementation plan                          (committed)
@@ -241,7 +242,7 @@ SKILL.md                     orchestrator instructions, gates, state and handoff
 references/stages.md         step-by-step procedure for every stage, loaded one at a time
 references/subagents.md      brief template and do/do-not rules for all 18 subagent roles
 assets/bootstrap.sh          Stage 0: repo, guard rules, local state directory
-assets/guard.sh              install / remove / report the pre-approval guard
+assets/guard.sh              install / remove / report guard rules; remove keeps the state-writer rule
 assets/state.js              atomic state writes, checkpoints, in_flight, snapshot hooks
 assets/*.test.js             node:test suite for state.js, guard.sh, and bootstrap.sh
 assets/ci.yml                CI workflow template for generated projects

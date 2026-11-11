@@ -20,6 +20,11 @@ if [ -n "$(ls -A | grep -v '^\.' || true)" ]; then
 fi
 
 [ -d .git ] || git init -q -b master
+branch="$(git branch --show-current)"
+if [ -z "$branch" ]; then
+  echo "ecc-workflow: repository is in detached HEAD; check out a branch first" >&2
+  exit 1
+fi
 mkdir -p .claude/ecc-workflow/handoffs .claude/ecc-workflow/slices .claude/ecc-workflow/screens design/preview docs/adr
 
 touch .gitignore
@@ -31,4 +36,4 @@ bash "${script_dir}/guard.sh" install --mode greenfield
 
 git add .gitignore
 git commit -q -m "chore: bootstrap repository"
-echo "ecc-workflow: bootstrapped on branch $(git branch --show-current)"
+echo "ecc-workflow: bootstrapped on branch $branch"

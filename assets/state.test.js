@@ -164,6 +164,124 @@ test('slices import rejects duplicate ids in the file', () => {
   }
 });
 
+test('set rejects protected keys and invalid values', () => {
+  const dir = tempProject();
+  try {
+    state.initState(dir, { mode: 'greenfield', project: 'demo' });
+    assert.throws(() => state.setState(dir, ['gates.G1.status=approved']), /own command/);
+    assert.throws(() => state.setState(dir, ['in_flight=null']), /own command/);
+    assert.throws(() => state.setState(dir, ['stgae=8']), /unknown state key/);
+    assert.throws(() => state.setState(dir, ['stage=99']), /unknown stage/);
+    assert.throws(() => state.setState(dir, ['status=nope']), /unknown status/);
+    assert.throws(() => state.setState(dir, ['mode=nope']), /unknown mode/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('gate requires evidence and scopes G5 to a slice', () => {
+  const dir = tempProject();
+  try {
+    state.initState(dir, { mode: 'greenfield', project: 'demo' });
+    assert.throws(() => state.gateState(dir, ['G1', 'approved']), /needs --evidence/);
+
+    state.setState(dir, ['slices=[{"id":"01-a"}]']);
+    assert.throws(
+      () => state.gateState(dir, ['G5', 'approved'], { evidence: 'https://example.com/pr/1' }),
+      /needs --slice/,
+    );
+
+    state.gateState(dir, ['G5', 'approved'], {
+      evidence: 'https://example.com/pr/1',
+      slice: '01-a',
+    });
+    assert.equal(state.readState(dir).gates.G5.slice, '01-a');
+
+    state.gateState(dir, ['G5', 'pending'], { slice: '01-a' });
+    const gate = state.readState(dir).gates.G5;
+    assert.equal(gate.evidence, undefined);
+    assert.equal(gate.evidence_hash, undefined);
+    assert.equal(gate.at, undefined);
+    assert.equal(gate.slice, '01-a');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('gate evidence is hashed and verified', () => {
+  const dir = tempProject();
+  try {
+    state.initState(dir, { mode: 'greenfield', project: 'demo' });
+    const evidence = path.join(dir, 'prd.md');
+    fs.writeFileSync(evidence, 'v1');
+    state.gateState(dir, ['G1', 'approved'], { evidence });
+
+    const gate = state.readState(dir).gates.G1;
+    assert.match(gate.evidence_hash, /^[a-f0-9]{64}$/);
+    assert.deepEqual(state.verifyGates(dir), []);
+
+    fs.writeFileSync(evidence, 'v2');
+    assert.match(state.verifyGates(dir).join(' '), /G1 evidence changed/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('writeState refuses a stale read', () => {
+  const dir = tempProject();
+  try {
+    state.initState(dir, { mode: 'greenfield', project: 'demo' });
+    const stale = state.readState(dir);
+    state.setState(dir, ['milestone=2']);
+    stale.milestone = 3;
+    assert.throws(
+      () => state.writeState(dir, stale, { snapshot: false }),
+      /state changed since it was read/,
+    );
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('restore brings back the latest checkpoint', () => {
+  const dir = tempProject();
+  try {
+    state.initState(dir, { mode: 'greenfield', project: 'demo' });
+    state.setState(dir, ['milestone=2']);
+    state.checkpointState(dir);
+    state.setState(dir, ['milestone=3']);
+
+    const restored = state.restoreState(dir);
+    assert.equal(restored.milestone, 2);
+    assert.equal(state.readState(dir).milestone, 2);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('milestone records completion', () => {
+  const dir = tempProject();
+  try {
+    state.initState(dir, { mode: 'greenfield', project: 'demo' });
+    const updated = state.milestoneState(dir, ['1', 'complete']);
+    assert.equal(updated.milestones['1'].status, 'complete');
+    assert.match(updated.milestones['1'].at, /^\d{4}-/);
+    assert.throws(() => state.milestoneState(dir, ['1', 'nope']), /unknown milestone status/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('hooks install creates a private settings file', () => {
+  const dir = tempProject();
+  try {
+    state.installHooks(dir);
+    assert.equal(fs.statSync(state.settingsPath(dir)).mode & 0o077, 0);
+  } finally {
+    cleanup(dir);
+  }
+});
+
 test('checkpoint writes a copy and keeps the directory bounded', () => {
   const dir = tempProject();
   try {

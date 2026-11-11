@@ -57,7 +57,7 @@ RETURN: Status line, files written, blockers. 15 lines or fewer.
 | build-fixer | `ecc:build-error-resolver` or the stack resolver | 8, 9 | only files named in the error output |
 | e2e | `ecc:e2e-runner` | 8 | E2E test directory, test artifacts |
 | verifier | `general-purpose` | 8, 10 | handoff, `.claude/ecc-workflow/screens/**` |
-| reviewer | `ecc:code-reviewer`, stack reviewer, `ecc:security-reviewer`, `ecc:a11y-architect`, `ecc:performance-optimizer`, `ecc:database-reviewer` | 9, 10 | nothing (read-only; returns report) |
+| reviewer | `ecc:code-reviewer`, stack reviewer, `ecc:security-reviewer`, `ecc:a11y-architect`, `ecc:performance-optimizer`, `ecc:database-reviewer` | 9, 10 | HANDOFF only when its toolset has Write; otherwise returns the findings table |
 | fixer | `ecc:tdd-guide` | 9 | files named in the findings it was given |
 | release-auditor | `general-purpose` | 10 | handoff only |
 | deploy-planner | `general-purpose` | 10 | `docs/release/**`, deploy config named in the brief |
@@ -119,8 +119,8 @@ RETURN: Status line, files written, blockers. 15 lines or fewer.
 - **Do not:** fix anything; report only. Call a check passed when it didn't run.
 
 ### reviewer (all review agents)
-- **Do:** review only `git diff <base-branch>...HEAD` (or the scope in the brief). Return a findings table: severity (CRITICAL, HIGH, MEDIUM, LOW), `file:line`, issue, suggested fix, and confidence. Say "no findings" explicitly when there are none.
-- **Do not:** edit files, including `ecc:performance-optimizer` and `ecc:a11y-architect`, which have write tools; this role is read-only. Review code outside the scope. Report style preferences as HIGH or CRITICAL.
+- **Do:** review only `git diff <base-branch>...HEAD` (or the scope in the brief). Write the full report to the HANDOFF path when your toolset includes Write; otherwise return only the findings table. In both cases the findings table has: severity (CRITICAL, HIGH, MEDIUM, LOW), `file:line`, issue, suggested fix, and confidence. Say "no findings" explicitly when there are none.
+- **Do not:** edit application files, including `ecc:performance-optimizer` and `ecc:a11y-architect`, which have write tools; writing the HANDOFF file is this role's only permitted write. Review code outside the scope. Report style preferences as HIGH or CRITICAL.
 
 ### fixer
 - **Do:** fix every CRITICAL, HIGH, and MEDIUM row listed in the brief, test first where behavior changes, and run the full test suite. Report LOW rows as deferred; fix them only when the human asks. For each finding, say fixed or not fixed, with the reason.

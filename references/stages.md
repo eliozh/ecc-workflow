@@ -28,13 +28,13 @@ bash <skill-dir>/assets/bootstrap.sh
 3. Write the initial state through the helper:
 
 ```bash
-node <skill-dir>/assets/state.js init --mode greenfield --project <name>
+node <skill-dir>/assets/state.js init --mode greenfield --project <name> --base-branch "$(git branch --show-current)"
 ```
 
    Also ask whether to install the optional state snapshot hooks. On yes, run `node <skill-dir>/assets/state.js hooks install`; `bootstrap.sh` already gitignores `.claude/settings.local.json`.
-4. Confirm both rules are active with `/ecc:hookify-list`. If hooks are off, stop and tell the human how to enable them.
+4. Confirm all three rules are active with `/ecc:hookify-list`. If hooks are off, stop and tell the human how to enable them.
 
-Exit: both guard rules listed, one commit on the base branch (`master` by default).
+Exit: all three guard rules listed, one commit on the base branch (`master` by default).
 
 ## Stage 1: PRD
 
@@ -44,7 +44,11 @@ Executor: orchestrator. This stage questions the human, so it can't be delegated
 2. Optionally, if the human wants it: `ecc:product-lens` to pressure-test the idea, or `ecc:council` for a contested scope call.
 3. Record `prd` in state.
 
-**G1:** show problem, primary user, hypothesis with measurable outcome, MVP, and out-of-scope list in 10 lines or fewer. On an explicit yes: commit `docs: add PRD`, set G1 approved.
+**G1:** show problem, primary user, hypothesis with measurable outcome, MVP, and out-of-scope list in 10 lines or fewer. On an explicit yes: commit `docs: add PRD`, then:
+
+```bash
+node <skill-dir>/assets/state.js gate G1 approved --evidence .claude/prds/<name>.prd.md
+```
 
 ## Stage 2: Research
 
@@ -99,13 +103,14 @@ ecc-plan-canvas await design/preview/index.html
 ```bash
 ecc-plan-canvas end design/preview/index.html
 git add design && git commit -m "docs: approve HTML preview"
+node <skill-dir>/assets/state.js gate G2 approved --evidence design/preview/index.html
 ```
 
 ## Stage 5: Architecture and plan
 
 1. Dispatch **architect**. READ: PRD, `H/02-research.md`, `design/DESIGN.md`, `design/flows.md`, `design/preview/index.html`. HANDOFF: `H/05-architecture.md`.
 2. Show the human the options and recommendation (from the summary) and ask them to choose the stack. Record `stack` in state, using an id from the stack table in `WORKFLOW.md` when one fits.
-3. Dispatch **planner**. READ: PRD, the ADRs, `H/05-architecture.md`, `design/flows.md`. HANDOFF: `H/05-plan.md`.
+3. Dispatch **planner**. READ: PRD, the ADRs, `H/05-architecture.md`, `design/flows.md`. HANDOFF: `H/05-plan.md`. Then record the plan: `node <skill-dir>/assets/state.js set plan=.claude/plans/<name>.plan.md`.
 4. Copy the slice list from the plan into `state.slices`. Prefer writing the list as JSON and importing it, so slices are matched by id instead of position:
 
 ```bash
@@ -118,7 +123,10 @@ node <skill-dir>/assets/state.js slices import <file>
 ```bash
 ecc-plan-canvas end .claude/plans/<name>.plan.md
 bash <skill-dir>/assets/guard.sh remove
+node <skill-dir>/assets/state.js gate G3 approved --evidence .claude/plans/<name>.plan.md
 ```
+
+   `guard.sh remove` deletes the two pre-approval rules; the state-writer rule stays installed.
 
 6. After `approve`, make sure the approved slice list is in `state.slices` (the import in step 4 does this). **Do not create issues here for a greenfield project:** the remote does not exist until Stage 7. Stage 7 step 6 creates the issue batch after `gh repo create`, and the G3 approval authorizes it. When this stage runs for a later milestone, the repository already exists, so create one issue per new slice here after G3. In both cases, never duplicate an issue that a slice already has, and record each number with:
 
@@ -145,6 +153,7 @@ Exit: build and tests pass locally.
 ```bash
 gh repo create <name> --private --source=. --push   # private
 gh repo create <name> --public  --source=. --push   # public
+node <skill-dir>/assets/state.js set repo=<owner>/<name>
 ```
 
 3. Watch CI (background). If it fails, follow the CI-failure rule in `SKILL.md`.
@@ -176,7 +185,12 @@ gh api repos/<owner>/<name>/branches/<base-branch>/protection --jq '.required_st
 6. This is where a greenfield project creates its issue batch, after the remote exists. For every slice in the approved plan, create exactly one issue titled `[<slice-id>] <title>`, skipping any slice that already has one. Each body names the milestone, the plan path and §4 of the plan, whether a security review is required, and the done-when: the slice's acceptance criteria pass in CI `verify` and the PR body contains `Closes #<issue>`. The G3 approval already authorized this batch; do not ask again. Record each number with `node <skill-dir>/assets/state.js slice <slice-id> issue=<n>`. Later milestones, planned when the repository already exists, create their issues at Stage 5 step 6 after G3.
 7. Remind the human to enable secret scanning, push protection, Dependabot alerts, and CodeQL under Settings → Code security. These aren't done by the skill.
 
-**G4:** show the green run link and the protection read-back. On yes, set G4 approved, `stage: 8`, `current_slice` = first pending slice.
+**G4:** show the green run link and the protection read-back. On yes:
+
+```bash
+node <skill-dir>/assets/state.js gate G4 approved --evidence "<CI run URL>"
+node <skill-dir>/assets/state.js set stage=8 current_slice=<first-pending-id>
+```
 
 ## Stage 8: Build one slice
 
@@ -186,6 +200,8 @@ Repeat per slice. One slice equals one branch equals one PR.
 
 ```bash
 node <skill-dir>/assets/state.js set current_slice=<slice-id> status=in-progress
+node <skill-dir>/assets/state.js slice <slice-id> status=in-progress
+node <skill-dir>/assets/state.js gate G5 pending --slice <slice-id>
 git switch <base-branch> && git pull --ff-only && git switch -c feat/<slice-id>
 ```
 
@@ -207,7 +223,7 @@ Exit: verification passes.
    - `ui: true`: `ecc:a11y-architect` (review only)
    - hot paths, bundle growth, slow queries: `ecc:performance-optimizer` (review only)
    - schema or query changes: `ecc:database-reviewer`
-2. Save each report to `S/review-<kind>.md`. Merge the findings tables into `S/findings.md`, removing duplicates.
+2. Each reviewer writes its full report to `S/review-<kind>.md` when its toolset has Write; otherwise save only the returned findings table to that path. Merge the tables into `S/findings.md`, removing duplicates.
 3. CRITICAL, HIGH, or MEDIUM findings: dispatch **fixer** with those rows. LOW findings are recorded in `S/findings.md` as deferred unless the human asks for them. Re-run only the reviewers that raised them. A HIGH (or a deliberately accepted MEDIUM) may be accepted only with the human's written reason, recorded in `S/findings.md` and the PR body.
 4. Push and open the PR:
 
@@ -216,6 +232,10 @@ git push -u origin feat/<slice-id>
 ```
 
    Then run `/ecc:pr <base-branch>`. The body must contain `Closes #<issue>` so merging the PR closes the issue; if `state.base_branch` is not the repository default branch, close the issue explicitly after the merge. Also add the MEDIUM findings for traceability: MEDIUMs are fixed before merge, so this list records what was fixed plus any accepted or deferred item.
+
+```bash
+node <skill-dir>/assets/state.js slice <slice-id> status=in-review
+```
 5. Watch checks in the background, and handle failures with build-fixer:
 
 ```bash
@@ -234,7 +254,7 @@ git switch <base-branch> && git pull --ff-only
 Mark the slice merged and point `current_slice` at the next step:
 
 ```bash
-node <skill-dir>/assets/state.js gate G5 approved --evidence "<PR URL>"
+node <skill-dir>/assets/state.js gate G5 approved --slice <slice-id> --evidence "<PR URL>"
 node <skill-dir>/assets/state.js slice <slice-id> status=merged
 node <skill-dir>/assets/state.js set current_slice=<next-id> status=in-progress
 ```
@@ -242,7 +262,7 @@ node <skill-dir>/assets/state.js set current_slice=<next-id> status=in-progress
 Set `current_slice` to the next pending slice id, or to `null` when the milestone is done. Then set `next_action` for the route that applies:
 
 - **Next pending slice:** `next_action` = `Start slice <next-id>: branch feat/<next-id> from <base-branch> and dispatch implementer with slices/<next-id>/brief.md`. Back to Stage 8.
-- **Milestone done but the PRD has more pending milestones:** mark the milestone `complete`, set `next_action` to the next planning step, then run Stage 5 steps 3–6 for the next milestone (planner, slice list, G3, then slice issues; the guard is gone, so G3 is only the canvas approval).
+- **Milestone done but the PRD has more pending milestones:** run `node <skill-dir>/assets/state.js milestone <n> complete`, set `next_action` to the next planning step, then run Stage 5 steps 3–6 for the next milestone (planner, slice list, G3, then slice issues; the guard is gone, so G3 is only the canvas approval).
 - **All MVP milestones done:** `node <skill-dir>/assets/state.js set stage=10 next_action="Run Stage 10: dispatch release-auditor three times in parallel"`.
 
 Close-out check before ending the session or running `/compact`:
@@ -256,7 +276,7 @@ node <skill-dir>/assets/state.js status
 ## Stage 10: Release
 
 1. In parallel, dispatch **release-auditor** three times: production audit (`H/10-audit-production.md`), full-repo security (`H/10-audit-security.md`), and dependency audit (`H/10-audit-deps.md`).
-2. CRITICAL, HIGH, or MEDIUM findings become fix slices: add them to `state.slices` and run them through Stages 8–9 first. LOW findings are recorded in the audit handoff as deferred.
+2. CRITICAL, HIGH, or MEDIUM findings become fix slices: add them to `state.slices` and run them through Stages 8–9 first. LOW findings are recorded in the audit handoff as deferred. These audit-driven slices are outside the G3 batch: before creating their issues, ask the human (hard rule 9 and the confirmation list), or record the release audit as a new authorized batch.
 3. Dispatch **deploy-planner**. HANDOFF: `H/10-deploy.md`. Its doc goes through a normal branch and PR.
 4. Ask the human for the version, then confirm the tag and release:
 
@@ -268,7 +288,12 @@ gh release create v<version> --generate-notes
 5. Deploying follows `docs/release/<version>.md` and needs the human's confirmation. The human may run it themselves.
 6. Dispatch **verifier** against the live URL, or the published package, app, or binary for non-web releases. HANDOFF: `H/10-verify.md`. Ask the human to confirm the rollback was rehearsed.
 
-**G6:** show the audit summary, verification result, and rollback confirmation. On yes, set G6 approved and `stage: 11`.
+**G6:** show the audit summary, verification result, and rollback confirmation. On yes:
+
+```bash
+node <skill-dir>/assets/state.js gate G6 approved --evidence docs/release/<version>.md
+node <skill-dir>/assets/state.js set stage=11
+```
 
 ## Stage 11: Maintain
 
@@ -286,6 +311,8 @@ Ask what the work is, classify it, and route it:
 | Next release | Stage 10 |
 
 The `orch-*` commands run their own gates, and their changes still go through a feature branch and a PR to the base branch.
+
+The state-writer guard stays installed after G3. When the run is finished, remove it with `bash <skill-dir>/assets/guard.sh remove --all` if the human wants.
 
 ## Stage F0: Feature preflight
 
@@ -371,13 +398,19 @@ Run Stage 2 only when the spec has open questions about a new dependency, extern
 
 Run Stage 3 with these deltas: the designer reads the spec, the existing `design/DESIGN.md`, `design/design-tokens.json`, and `design/flows.md`; it changes only the affected sections, tokens, and flows, and preserves the existing direction. HANDOFF `H/F3-design.md`. Run the a11y-designer for changed flows. Commit `docs: update design for <slug>`.
 
-No UI or output-format change: run `node <skill-dir>/assets/state.js set feature.design=skipped`, set G2 `n/a`, and go to F5.
+No UI or output-format change: run `node <skill-dir>/assets/state.js set feature.design=skipped`, run `node <skill-dir>/assets/state.js gate G2 n/a`, and go to F5.
 
 ## Stage F4: HTML preview (UI only)
 
 Run Stage 4 with these deltas: the preview-builder integrates the new screens and states into the existing `design/preview/index.html` hub; it does not rebuild unrelated screens. The checker compares the new screens with the existing direction. The Plan Canvas loop is unchanged.
 
-**G2:** the canvas verdict `approve`. End the canvas, commit `docs: approve preview for <slug>`, and set G2 approved. No UI: G2 `n/a` from F3, go to F5.
+**G2:** the canvas verdict `approve`. End the canvas, commit `docs: approve preview for <slug>`, and record the gate:
+
+```bash
+node <skill-dir>/assets/state.js gate G2 approved --evidence design/preview/index.html
+```
+
+No UI: G2 is `n/a` from F3; go to F5.
 
 ## Stage F5: Architecture and plan
 

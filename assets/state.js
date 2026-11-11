@@ -16,7 +16,10 @@
  *   node state.js set key=value [key=value ...]
  *   node state.js slice <id> key=value [key=value ...]
  *   node state.js slices import <file>
- *   node state.js gate <G1..G6> <pending|approved|n/a|inherited> [--evidence <path>]
+ *   node state.js milestone <n> <pending|in-progress|complete>
+ *   node state.js gate <G1..G6> <pending|approved|n/a|inherited> [--evidence <path-or-url>] [--slice <slice-id>]
+ *   node state.js verify
+ *   node state.js restore [<checkpoint-file>]
  *   node state.js begin --role <role> [--step <step>] [--handoff <path>]
  *   node state.js end [--next "<next action>"]
  *   node state.js checkpoint [--auto]
@@ -29,12 +32,35 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 
 const VERSION = 2;
 const KEEP_CHECKPOINTS = 50;
 const HOOK_MARKER = 'ecc-workflow-state';
 const HOOK_EVENTS = ['PreCompact', 'Stop', 'SessionEnd'];
+const VALID_STATUSES = new Set(['in-progress', 'awaiting-gate', 'blocked', 'done']);
+const VALID_MODES = new Set(['greenfield', 'feature', 'maintain']);
+const PROTECTED_KEYS = new Set(['version', 'revision', 'updated_at', 'gates', 'in_flight']);
+const SETTABLE_KEYS = new Set([
+  'project',
+  'base_branch',
+  'mode',
+  'stage',
+  'status',
+  'prd',
+  'plan',
+  'stack',
+  'repo',
+  'milestone',
+  'milestone_seq',
+  'milestones',
+  'slices',
+  'current_slice',
+  'next_action',
+  'feature',
+  'protection',
+]);
 
 class StateError extends Error {}
 
@@ -60,6 +86,59 @@ function safeSlug(value) {
 
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function isValidStage(value) {
+  if (typeof value === 'number') return Number.isInteger(value) && value >= 0 && value <= 11;
+  if (typeof value === 'string') return /^(F[0-7]|[0-9]|1[01])$/.test(value);
+  return false;
+}
+
+function isUrl(value) {
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(String(value || ''));
+}
+
+function evidenceHash(root, evidence) {
+  if (!evidence || isUrl(evidence)) return null;
+  const target = path.isAbsolute(evidence) ? evidence : path.resolve(root, evidence);
+  try {
+    if (!fs.statSync(target).isFile()) return null;
+    return crypto.createHash('sha256').update(fs.readFileSync(target)).digest('hex');
+  } catch (_) {
+    return null;
+  }
+}
+
+function gateWarnings(root, state) {
+  const warnings = [];
+  for (const [id, gate] of Object.entries(state.gates || {})) {
+    if (!gate || !['approved', 'inherited'].includes(gate.status)) continue;
+    if (!gate.evidence) {
+      warnings.push(`${id} has no evidence`);
+      continue;
+    }
+    if (!gate.evidence_hash) {
+      if (!isUrl(gate.evidence)) {
+        const target = path.isAbsolute(gate.evidence)
+          ? gate.evidence
+          : path.resolve(root, gate.evidence);
+        if (!fs.existsSync(target)) warnings.push(`${id} evidence is missing`);
+      }
+      continue;
+    }
+    const target = path.isAbsolute(gate.evidence)
+      ? gate.evidence
+      : path.resolve(root, gate.evidence);
+    let current = null;
+    try {
+      current = crypto.createHash('sha256').update(fs.readFileSync(target)).digest('hex');
+    } catch (_) {
+      warnings.push(`${id} evidence is missing`);
+      continue;
+    }
+    if (current !== gate.evidence_hash) warnings.push(`${id} evidence changed`);
+  }
+  return warnings;
 }
 
 function writeFileAtomic(file, body, mode = 0o600) {
@@ -140,6 +219,7 @@ function readState(root, { required = true } = {}) {
     }
   }
   state.mode = state.mode || 'greenfield';
+  state.revision = state.revision ?? 0;
   state.in_flight = state.in_flight ?? null;
   return state;
 }
@@ -188,11 +268,14 @@ function checkpoint(root, state, label = 'auto') {
 
 function writeState(root, state, { snapshot = true, label = 'auto' } = {}) {
   fs.mkdirSync(stateDir(root), { recursive: true });
-  if (snapshot) {
-    const previous = readState(root, { required: false });
-    if (previous) checkpoint(root, previous, label);
+  const expected = state.revision;
+  const previous = readState(root, { required: false });
+  if (previous && expected !== undefined && previous.revision !== expected) {
+    fail('state changed since it was read; re-read and retry');
   }
+  if (snapshot && previous) checkpoint(root, previous, label);
   state.version = VERSION;
+  state.revision = previous ? (previous.revision ?? 0) + 1 : 1;
   state.updated_at = now();
   writeFileAtomic(statePath(root), `${JSON.stringify(state, null, 2)}\n`, 0o600);
   return state;
@@ -295,6 +378,7 @@ function initState(root, opts = {}) {
       repo: null,
       milestone: 1,
       milestone_seq: 1,
+      milestones: {},
       slices: [],
       current_slice: null,
       in_flight: null,
@@ -350,6 +434,7 @@ function initState(root, opts = {}) {
     },
     milestone: milestoneSeq,
     milestone_seq: milestoneSeq,
+    milestones: existing.milestones ?? {},
     gates: {
       ...(existing.gates || {}),
       G1: { status: 'pending' },
@@ -371,7 +456,21 @@ function setState(root, args) {
   for (const pair of args) {
     const separator = pair.indexOf('=');
     if (separator < 1) fail(`bad assignment: ${pair}`);
-    setPath(state, pair.slice(0, separator), parseValue(pair.slice(separator + 1)));
+    const dotted = pair.slice(0, separator);
+    const parts = dotted.split('.');
+    if (parts.some((part) => ['__proto__', 'constructor', 'prototype'].includes(part))) {
+      fail(`unsafe state key: ${dotted}`);
+    }
+    const top = parts[0];
+    const value = parseValue(pair.slice(separator + 1));
+    if (PROTECTED_KEYS.has(top)) {
+      fail(`${top} is written by its own command; use state.js gate/begin/end`);
+    }
+    if (!SETTABLE_KEYS.has(top)) fail(`unknown state key: ${top}`);
+    if (top === 'stage' && !isValidStage(value)) fail(`unknown stage: ${value}`);
+    if (top === 'status' && !VALID_STATUSES.has(value)) fail(`unknown status: ${value}`);
+    if (top === 'mode' && !VALID_MODES.has(value)) fail(`unknown mode: ${value}`);
+    setPath(state, dotted, value);
   }
   return writeState(root, state, { label: 'set' });
 }
@@ -457,20 +556,98 @@ function importSlices(root, file) {
 function gateState(root, args, opts = {}) {
   const [id, status] = args;
   if (!id || !status) {
-    fail('usage: gate <G1..G6> <pending|approved|n/a|inherited> [--evidence <path>]');
+    fail(
+      'usage: gate <G1..G6> <pending|approved|n/a|inherited> [--evidence <path-or-url>] [--slice <slice-id>]',
+    );
   }
   if (!/^G[1-6]$/.test(id)) fail(`unknown gate: ${id}`);
   if (!['pending', 'approved', 'n/a', 'inherited'].includes(status)) {
     fail(`unknown gate status: ${status}`);
   }
   const state = readState(root);
+  if (opts.slice) {
+    const slices = Array.isArray(state.slices) ? state.slices : [];
+    if (!slices.some((slice) => slice && slice.id === opts.slice)) {
+      fail(`unknown slice: ${opts.slice}`);
+    }
+  }
+  if (id === 'G5' && (status === 'approved' || status === 'inherited') && !opts.slice) {
+    fail('G5 needs --slice <slice-id>');
+  }
+  if ((status === 'approved' || status === 'inherited') && !opts.evidence) {
+    fail(`${id} ${status} needs --evidence <path-or-url>`);
+  }
   const previous = (state.gates && state.gates[id]) || {};
   const next = { ...previous, status };
-  if (status === 'approved' || status === 'inherited') next.at = now();
-  else delete next.at;
-  if (opts.evidence) next.evidence = opts.evidence;
+  if (status === 'approved' || status === 'inherited') {
+    next.at = now();
+    next.evidence = opts.evidence;
+    const hash = evidenceHash(root, opts.evidence);
+    if (hash) next.evidence_hash = hash;
+    else delete next.evidence_hash;
+    if (opts.slice) next.slice = opts.slice;
+  } else {
+    delete next.at;
+    delete next.evidence;
+    delete next.evidence_hash;
+    if (opts.slice) next.slice = opts.slice;
+    else delete next.slice;
+  }
   state.gates = { ...(state.gates || {}), [id]: next };
   return writeState(root, state, { label: `gate-${id}` });
+}
+
+function verifyGates(root) {
+  const state = readState(root);
+  return gateWarnings(root, state);
+}
+
+function restoreState(root, file) {
+  const target = file || latestCheckpoint(checkpointDir(root));
+  if (!target) fail(`no checkpoints in ${checkpointDir(root)}`);
+  const resolved = path.isAbsolute(target) ? target : path.resolve(root, target);
+  let raw;
+  try {
+    raw = fs.readFileSync(resolved, 'utf8');
+  } catch (error) {
+    fail(`cannot read ${resolved}: ${error.message}`);
+  }
+  let restored;
+  try {
+    restored = JSON.parse(raw);
+  } catch (error) {
+    fail(`${resolved} is not valid JSON: ${error.message}`);
+  }
+  if (restored === null || typeof restored !== 'object' || Array.isArray(restored)) {
+    fail(`${resolved} must contain a JSON object`);
+  }
+  if (fs.existsSync(statePath(root))) {
+    const backup = `${statePath(root)}.before-restore-${isoForFilename(now())}`;
+    try {
+      fs.copyFileSync(statePath(root), backup);
+    } catch (_) {
+      /* a failed backup must not block the restore */
+    }
+  }
+  restored.version = VERSION;
+  restored.revision = (restored.revision ?? 0) + 1;
+  restored.updated_at = now();
+  writeFileAtomic(statePath(root), `${JSON.stringify(restored, null, 2)}\n`, 0o600);
+  return restored;
+}
+
+function milestoneState(root, args) {
+  const [number, status] = args;
+  if (!number || !status) fail('usage: milestone <n> <pending|in-progress|complete>');
+  if (!/^\d+$/.test(String(number))) fail(`bad milestone number: ${number}`);
+  if (!['pending', 'in-progress', 'complete'].includes(status)) {
+    fail(`unknown milestone status: ${status}`);
+  }
+  const state = readState(root);
+  const key = String(number);
+  const record = status === 'pending' ? { status } : { status, at: now() };
+  state.milestones = { ...(state.milestones || {}), [key]: record };
+  return writeState(root, state, { label: `milestone-${key}` });
 }
 
 function beginState(root, opts = {}) {
@@ -544,7 +721,13 @@ function loadSettings(root) {
 }
 
 function writeSettings(root, settings) {
-  writeFileAtomic(settingsPath(root), `${JSON.stringify(settings, null, 2)}\n`, 0o644);
+  let mode = 0o600;
+  try {
+    mode = fs.statSync(settingsPath(root)).mode & 0o777;
+  } catch (_) {
+    /* a new settings file starts private */
+  }
+  writeFileAtomic(settingsPath(root), `${JSON.stringify(settings, null, 2)}\n`, mode);
 }
 
 function hookCommand() {
@@ -611,15 +794,19 @@ function hooksStatus(root) {
   );
 }
 
-function summarize(state) {
+function summarize(state, root) {
   const gates = Object.entries(state.gates || {})
-    .map(([id, gate]) => `${id} ${gate.status}`)
+    .map(([id, gate]) => `${id} ${gate.status}${gate.slice ? ` (${gate.slice})` : ''}`)
     .join(' | ');
   const lines = [];
   const label = state.feature ? `${state.mode} (${state.feature.slug})` : state.mode;
   lines.push(`mode: ${label}`);
   lines.push(`stage: ${state.stage}  status: ${state.status}`);
   lines.push(`gates: ${gates}`);
+  if (root) {
+    const warnings = gateWarnings(root, state);
+    lines.push(`evidence: ${warnings.length ? warnings.join('; ') : 'ok'}`);
+  }
   if (state.current_slice) lines.push(`slice: ${state.current_slice}`);
   if (state.paused) {
     lines.push(
@@ -646,7 +833,10 @@ function usage() {
     '  state.js set key=value [key=value ...]',
     '  state.js slice <id> key=value [key=value ...]',
     '  state.js slices import <file>',
-    '  state.js gate <G1..G6> <pending|approved|n/a|inherited> [--evidence <path>]',
+    '  state.js milestone <n> <pending|in-progress|complete>',
+    '  state.js gate <G1..G6> <pending|approved|n/a|inherited> [--evidence <path-or-url>] [--slice <slice-id>]',
+    '  state.js verify',
+    '  state.js restore [<checkpoint-file>]',
     '  state.js begin --role <role> [--step <step>] [--handoff <path>]',
     '  state.js end [--next "<next action>"]',
     '  state.js checkpoint [--auto]',
@@ -670,38 +860,56 @@ function dispatch(argv) {
         console.log(opts.json ? 'null' : 'no state');
         return;
       }
-      console.log(opts.json ? JSON.stringify(state, null, 2) : summarize(state));
+      console.log(opts.json ? JSON.stringify(state, null, 2) : summarize(state, root));
       return;
     }
     case 'init': {
-      console.log(summarize(initState(root, opts)));
+      console.log(summarize(initState(root, opts), root));
       return;
     }
     case 'set': {
-      console.log(summarize(setState(root, args)));
+      console.log(summarize(setState(root, args), root));
       return;
     }
     case 'slice': {
       const id = args.shift();
-      console.log(summarize(updateSlice(root, id, args)));
+      console.log(summarize(updateSlice(root, id, args), root));
       return;
     }
     case 'slices': {
       const action = args.shift();
       if (action !== 'import') usage();
-      console.log(summarize(importSlices(root, args[0])));
+      console.log(summarize(importSlices(root, args[0]), root));
+      return;
+    }
+    case 'milestone': {
+      console.log(summarize(milestoneState(root, args), root));
       return;
     }
     case 'gate': {
-      console.log(summarize(gateState(root, args, opts)));
+      console.log(summarize(gateState(root, args, opts), root));
+      return;
+    }
+    case 'verify': {
+      const warnings = verifyGates(root);
+      if (warnings.length) {
+        console.log(warnings.join('\n'));
+        process.exitCode = 1;
+      } else {
+        console.log('gate evidence ok');
+      }
+      return;
+    }
+    case 'restore': {
+      console.log(summarize(restoreState(root, args[0]), root));
       return;
     }
     case 'begin': {
-      console.log(summarize(beginState(root, opts)));
+      console.log(summarize(beginState(root, opts), root));
       return;
     }
     case 'end': {
-      console.log(summarize(endState(root, opts)));
+      console.log(summarize(endState(root, opts), root));
       return;
     }
     case 'checkpoint': {
@@ -714,7 +922,7 @@ function dispatch(argv) {
       return;
     }
     case 'finish-feature': {
-      console.log(summarize(finishFeatureState(root)));
+      console.log(summarize(finishFeatureState(root), root));
       return;
     }
     case 'hooks': {
@@ -779,7 +987,10 @@ module.exports = {
   setState,
   updateSlice,
   importSlices,
+  milestoneState,
   gateState,
+  verifyGates,
+  restoreState,
   beginState,
   endState,
   checkpointState,

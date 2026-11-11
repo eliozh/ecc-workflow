@@ -19,7 +19,7 @@
 > [!IMPORTANT]
 > **唯一铁律：** 在人类批准产品的 HTML 预览稿、以及基于该预览稿的实现计划之前，**不写任何应用代码**。
 >
-> 两条 Hookify 规则会在计划获批前机械地拦截代码写入和脚手架命令；此外还有六道人工闸门。沉默永远不等于批准。
+> 两条 pre-approval Hookify 规则会在计划获批前机械地拦截代码写入和脚手架命令；第三条把工作流状态与本地设置绑定到各自的 helper。此外还有六道人工闸门。沉默永远不等于批准。
 
 ## 为什么需要它
 
@@ -116,14 +116,15 @@ flowchart LR
 
 ## 到底是什么在拦住代码
 
-在 Stage 0（新建）或 F0（功能模式）时，技能会向项目安装两条 **Hookify** 规则：
+在 Stage 0（新建）或 F0（功能模式）时，技能会向项目安装两条 pre-approval **Hookify** 规则和一条 state-writer 规则：
 
 | 规则 | 拦截 | 解除于 |
 |---|---|---|
 | `block-code-before-approval` | 对 `design/`、`docs/`、`.claude/`、Markdown 和 `.gitignore` 之外的 Write/Edit | G2 与 G3 获批 |
 | `block-scaffold-before-approval` | `npm create`、`cargo new`、`uv init`、`rails new`、`flutter create` 等脚手架命令 | G2 与 G3 获批 |
+| `block-state-writes` | 对 `.claude/ecc-workflow/state.json`、`.claude/settings.local.json`、`.claude/hookify.*.local.md` 的 Write/Edit | G3 不会解除；用 `guard.sh remove --all` 移除 |
 
-G3 获批时会自动移除——那一刻，代码才真正合法。
+前两条在 G3 获批时自动移除——那一刻，代码才真正合法。state-writer 规则保留，确保闸门状态只能通过 `state.js` 修改。
 
 > [!WARNING]
 > **护栏不是锁。** 它拦住的是 Agent 自己的文件编辑和已知脚手架命令，拦不住 shell 重定向（`echo x > src/app.ts`），也拦不住你本人。而且它只存在于本地：Hookify 规则必须保持未跟踪，新克隆的仓库不会带上它。真正的控制权在你的闸门批准。
@@ -209,7 +210,7 @@ node assets/state.js hooks install
 
 ```text
 .claude/ecc-workflow/            本地状态、handoff、checkpoint          （gitignore）
-.claude/hookify.*.local.md       审批前护栏，G3 时移除                 （gitignore）
+.claude/hookify.*.local.md       审批前护栏（G3 时移除）与 state-writer 护栏（保留）  （gitignore）
 .claude/settings.local.json      可选的状态快照钩子                    （gitignore）
 .claude/prds/<name>.prd.md       需求文档                              （提交）
 .claude/plans/<name>.plan.md     实现计划                              （提交）
@@ -241,7 +242,7 @@ SKILL.md                     编排者指令：闸门、状态与 handoff 格式
 references/stages.md         每个阶段的逐步流程，一次只加载一节
 references/subagents.md      简报模板与 18 个子代理角色的 do / do-not 规则
 assets/bootstrap.sh          Stage 0：仓库、护栏规则、本地状态目录
-assets/guard.sh              安装 / 移除 / 查看审批前护栏
+assets/guard.sh              安装 / 移除 / 查看护栏规则；remove 默认保留 state-writer 规则
 assets/state.js              原子状态写入、checkpoint、in_flight、快照钩子
 assets/*.test.js             state.js、guard.sh、bootstrap.sh 的 node:test 套件
 assets/ci.yml                生成项目用的 CI 工作流模板

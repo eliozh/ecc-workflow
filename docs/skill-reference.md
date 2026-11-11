@@ -32,7 +32,7 @@ flowchart LR
 
 Along the way it:
 
-- **Guards the order.** Stage 0 (or F0 in feature mode) installs two Hookify rules that block code writes and scaffolding commands until G3. They're removed when you approve the plan.
+- **Guards the order.** Stage 0 (or F0 in feature mode) installs two pre-approval Hookify rules that block code writes and scaffolding commands until G3, plus a state-writer rule that keeps `state.json`, local settings, and the guard files on their helpers. The pre-approval rules are removed when you approve the plan; the state-writer rule stays until `guard.sh remove --all`.
 - **Uses feature branches throughout development.** Each slice is one `feat/<slice>` branch and one PR into the base branch.
 - **Tracks every slice as an issue.** After G3 and once the repository exists, it creates exactly one issue per slice; every PR body carries `Closes #<issue>`, so merging the PR closes the issue.
 - **Reviews every change** with the general and stack-specific reviewers, adds a security review when the change touches a security trigger, then runs a PR-level review before asking you to merge.
@@ -72,7 +72,7 @@ Things no subagent may do: ask you questions, approve gates, edit the state file
 .claude/ecc-workflow/screens/      preview and QA screenshots                 (local, gitignored)
 .claude/ecc-workflow/checkpoints/  previous state before each write           (local, gitignored)
 .claude/ecc-workflow/archive/      paused state and finished feature records  (local, gitignored)
-.claude/hookify.*.local.md         pre-approval guard, removed at G3          (local, gitignored)
+.claude/hookify.*.local.md         pre-approval guards (removed at G3) plus the state-writer guard (stays) (local, gitignored)
 .claude/settings.local.json        optional state snapshot hooks              (local, gitignored)
 .claude/prds/<name>.prd.md         requirements                               (committed)
 .claude/plans/<name>.plan.md       implementation plan                        (committed)
@@ -173,7 +173,7 @@ ecc-workflow/
   references/stages.md        step-by-step procedure for each stage
   references/subagents.md     brief template, do/do-not rules for every subagent role
   assets/bootstrap.sh         Stage 0 setup: repo, guard rules, local state directory
-  assets/guard.sh             install/remove/report the pre-approval guard rules
+  assets/guard.sh             install / remove / report guard rules; remove keeps the state-writer rule
   assets/state.js             atomic state writes, checkpoints, in_flight, snapshot hooks
   assets/state.test.js        node:test suite for state.js
   assets/guard.test.js        node:test suite for guard.sh

@@ -130,8 +130,9 @@ git add -A && git commit -m "chore: bootstrap repository"
 - **它必须保持未被跟踪。** ECC 默认禁用被 Git 跟踪的 Hookify 规则，因此 `.gitignore` 排除了 `.claude/*.local.md`。新克隆的仓库没有这个守卫，不要指望它跨机器生效。
 - **注意项目路径。** 规则匹配的是绝对路径。如果项目本身位于名为 `docs` 或 `design` 的目录下（例如 `~/docs/myapp`），所有文件都会被豁免，守卫会悄无声息地失效。
 - **必须启用钩子。** 用 `/hookify-list` 确认。
+- **G3 后仍保留一条规则。** `block-state-writes` 让 `state.json`、`settings.local.json` 和 guard 规则只能通过各自的 helper 修改。`guard.sh remove` 会保留它；`guard.sh remove --all` 才会移除。
 
-**出口条件：** 两条规则都出现在 `/hookify-list` 中。
+**出口条件：** 三条规则都出现在 `/hookify-list` 中。
 
 ## 第 1 阶段：PRD
 

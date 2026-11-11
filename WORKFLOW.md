@@ -130,8 +130,9 @@ What the guard does and doesn't do:
 - **It must stay untracked.** ECC disables Git-tracked Hookify rules by default, which is why `.gitignore` excludes `.claude/*.local.md`. A fresh clone won't have the guard, so don't rely on it across machines.
 - **Watch the project path.** The rule matches absolute paths. If the project itself lives under a folder named `docs` or `design` (like `~/docs/myapp`), every file is exempt and the guard silently does nothing.
 - **Hooks must be on.** Confirm with `/hookify-list`.
+- **One rule stays after G3.** `block-state-writes` keeps `state.json`, `settings.local.json`, and the guard rules on their helpers. `guard.sh remove` leaves it installed; `guard.sh remove --all` removes it.
 
-**Exit:** both rules appear in `/hookify-list`.
+**Exit:** all three rules appear in `/hookify-list`.
 
 ## Stage 1: PRD
 
