@@ -165,7 +165,7 @@ The main session is deliberately small. It talks to you, holds the gates, runs g
 
 ```mermaid
 flowchart TB
-  H([Human]) <-->|gates · questions · merge approval (human mode)| O[Orchestrator<br/>small context]
+  H([Human]) <-->|gates, questions, merge approval, human mode| O[Orchestrator<br/>small context]
   O -->|brief| A[research · design · preview<br/>architecture · plan]
   O -->|brief| S[scaffold]
   O -->|brief per slice| SR[slice-runner]
