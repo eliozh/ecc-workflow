@@ -17,6 +17,7 @@
  *   node state.js slice <id> key=value [key=value ...]
  *   node state.js slices import <file>
  *   node state.js milestone <n> <pending|in-progress|complete>
+ *   node state.js next
  *   node state.js review <human|auto> [--scope gates|all] [--reason "<why>"]
  *   node state.js goto <stage> [--no-guard]
  *   node state.js gate <G1..G6> <pending|approved|n/a|inherited> [--evidence <path-or-url>] [--slice <slice-id>]
@@ -437,6 +438,9 @@ function initState(root, opts = {}) {
   if (existing.mode === 'feature') {
     fail('a feature run is already active; finish it with "finish-feature" before starting another');
   }
+  if (existing.in_flight) {
+    fail('a step is in flight; resume or finish it before starting a feature');
+  }
   if (mode !== 'feature') fail('state already exists; use /ecc-workflow resume');
 
   archiveBeforeFeature(root, existing);
@@ -466,6 +470,11 @@ function initState(root, opts = {}) {
       plan: existing.plan ?? null,
       stack: existing.stack ?? null,
       repo: existing.repo ?? null,
+      protection: existing.protection ?? null,
+      review_mode: existing.review_mode ?? 'human',
+      review_scope: existing.review_scope ?? 'gates',
+      review_reason: existing.review_reason ?? null,
+      review_set_at: existing.review_set_at ?? null,
       gates: JSON.parse(JSON.stringify(existing.gates || {})),
     },
     milestone: milestoneSeq,
@@ -587,6 +596,46 @@ function importSlices(root, file) {
   }
   state.slices = merged;
   return writeState(root, state, { label: 'slices-import' });
+}
+
+function nextAction(root) {
+  const state = readState(root);
+  const current = Number(state.milestone ?? 1);
+  const slices = (Array.isArray(state.slices) ? state.slices : [])
+    .filter((slice) => slice && typeof slice === 'object');
+  const belongs = (slice) => {
+    const tagged = slice && slice.milestone !== undefined && slice.milestone !== null;
+    return !tagged || Number(slice.milestone) === current;
+  };
+  const currentSlices = slices.filter(belongs);
+
+  const resumable = currentSlices.find((slice) =>
+    ['in-progress', 'in-review'].includes(slice.status));
+  if (resumable) {
+    return { action: 'resume', milestone: current, slice: resumable.id, status: resumable.status };
+  }
+  const pending = currentSlices.find((slice) =>
+    slice.status === undefined || slice.status === 'pending');
+  if (pending) {
+    return { action: 'start', milestone: current, slice: pending.id, status: pending.status || 'pending' };
+  }
+  const blocked = currentSlices.find((slice) => slice.status !== 'merged');
+  if (blocked) {
+    return { action: 'blocked', milestone: current, slice: blocked.id, status: blocked.status || 'unknown' };
+  }
+  const stale = slices.filter((slice) => {
+    const tagged = slice && slice.milestone !== undefined && slice.milestone !== null;
+    return tagged && Number(slice.milestone) < current && slice.status !== 'merged';
+  });
+  if (stale.length) {
+    return {
+      action: 'blocked',
+      milestone: current,
+      reason: 'a previous milestone has unmerged slices',
+      slices: stale.map((slice) => slice.id),
+    };
+  }
+  return { action: 'milestone-done', milestone: current };
 }
 
 function gateState(root, args, opts = {}) {
@@ -801,7 +850,7 @@ function beginState(root, opts = {}) {
   const targets = handoffs.length ? handoffs.join(', ') : 'the handoff';
   const who = roles.join(', ');
   state.next_action = handoffs.length
-    ? `Read ${targets} if each exists and has a complete status header; otherwise re-dispatch ${who}`
+    ? `Read ${targets} if each exists and has a complete status and task header; otherwise re-dispatch ${who}`
     : `Re-dispatch ${who} if it did not finish`;
   return writeState(root, state, { label: 'begin' });
 }
@@ -833,6 +882,13 @@ function finishFeatureState(root) {
     state.plan = state.paused.plan ?? null;
     state.stack = state.paused.stack ?? null;
     state.repo = state.paused.repo ?? null;
+    state.protection = state.paused.protection ?? null;
+    state.review_mode = state.paused.review_mode || 'human';
+    state.review_scope = state.paused.review_scope || 'gates';
+    if (state.paused.review_reason) state.review_reason = state.paused.review_reason;
+    else delete state.review_reason;
+    if (state.paused.review_set_at) state.review_set_at = state.paused.review_set_at;
+    else delete state.review_set_at;
     if (state.paused.gates) state.gates = state.paused.gates;
     delete state.paused;
   } else {
@@ -953,7 +1009,7 @@ function summarize(state, root) {
   const label = state.feature ? `${state.mode} (${state.feature.slug})` : state.mode;
   lines.push(`mode: ${label}`);
   lines.push(`review: ${state.review_mode}${state.review_mode === 'auto' ? ` (${state.review_scope})` : ''}`);
-  lines.push(`stage: ${state.stage}  status: ${state.status}`);
+  lines.push(`stage: ${state.stage}  milestone: ${state.milestone ?? 1}  status: ${state.status}`);
   lines.push(`gates: ${gates}`);
   if (root) {
     const warnings = gateWarnings(root, state);
@@ -962,7 +1018,7 @@ function summarize(state, root) {
   if (state.current_slice) lines.push(`slice: ${state.current_slice}`);
   if (state.paused) {
     lines.push(
-      `paused: milestone ${state.paused.milestone}, slice ${state.paused.current_slice || 'none'}`,
+      `paused: milestone ${state.paused.milestone}, slice ${state.paused.current_slice || 'none'}, review ${state.paused.review_mode || 'human'}`,
     );
   }
   if (state.in_flight) {
@@ -991,6 +1047,7 @@ function usage() {
     '  state.js slice <id> key=value [key=value ...]',
     '  state.js slices import <file>',
     '  state.js milestone <n> <pending|in-progress|complete>',
+    '  state.js next',
     '  state.js review <human|auto> [--scope gates|all] [--reason "<why>"]',
     '  state.js goto <stage> [--no-guard]',
     '  state.js gate <G1..G6> <pending|approved|n/a|inherited> [--evidence <path-or-url>] [--slice <slice-id>]',
@@ -1043,6 +1100,10 @@ function dispatch(argv) {
     }
     case 'milestone': {
       console.log(summarize(milestoneState(root, args), root));
+      return;
+    }
+    case 'next': {
+      console.log(JSON.stringify(nextAction(root)));
       return;
     }
     case 'review': {
@@ -1160,6 +1221,7 @@ module.exports = {
   updateSlice,
   importSlices,
   milestoneState,
+  nextAction,
   reviewState,
   gotoState,
   gateState,

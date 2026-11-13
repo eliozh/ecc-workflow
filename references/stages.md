@@ -1,10 +1,6 @@
 # Stage procedures
 
-Load one section at a time:
-
-```bash
-awk -v s='^## Stage N:' '$0 ~ s {p=1} p && /^## Stage / && $0 !~ s {exit} p' <skill-dir>/references/stages.md
-```
+Load one section at a time with the `awk` command in `SKILL.md` → Startup step 6.
 
 `H` below means `.claude/ecc-workflow/handoffs`, and `S` means `.claude/ecc-workflow/slices/<slice-id>`. `<base-branch>` means `state.base_branch` (`master` for a greenfield project unless the human chose another name). Every subagent is briefed per `references/subagents.md`. Update state through `assets/state.js` after each numbered step.
 
@@ -14,6 +10,7 @@ Three sequences share this file:
 - **Feature:** Stages F0–F7, then back to the paused milestone.
 - **Shared:** 2, 3, 4, 5, 8, 9, and 10 are reused by feature mode; their procedures are unchanged unless an F-stage section says otherwise. Commands use `<base-branch>`, which resolves to `state.base_branch`.
 - **Autonomous mode:** when `state.review_mode` is `auto`, replace every “ask the human” and “explicit yes” with the recommended option, except G2, and record the gate with `--auto`. If the recommendation is to stop, fix first, re-run, or escalate, take that path instead of approving. G5's auto-approval also authorizes the merge. G3 is recorded from the plan file and planner handoff; G2 stays a human canvas verdict. `review_scope=all` covers the outward confirmations outside the gates; the default `gates` scope does not. After each merge, continue to the next slice without asking.
+- **Switching modes:** re-read `review_mode` and `review_scope` from state before every gate and every loop iteration; never cache them. A switch to `human` takes effect at the next gate or slice boundary, and a running subagent finishes first. Re-read both immediately before an outward action (merge, tag, release, deploy); if either no longer covers it, ask. If `gate ... --auto` fails because the mode changed, ask the human instead of forcing it.
 - **Asking:** when a step says “ask the human”, ask with the `AskUserQuestion` tool, recommended option first and labeled `(Recommended)`. G2 stays in Plan Canvas; in auto mode G3 is recorded from the plan file. Free-form answers such as a repository name, version, or URL stay in plain chat.
 
 ## Stage 0: Bootstrap
@@ -114,14 +111,14 @@ node <skill-dir>/assets/state.js gate G2 approved --evidence design/preview/inde
 
 1. Dispatch **architect**. READ: PRD, `H/02-research.md`, `design/DESIGN.md`, `design/flows.md`, `design/preview/index.html`. HANDOFF: `H/05-architecture.md`.
 2. Show the human the options and recommendation (from the summary) and ask them to choose the stack. Record `stack` in state, using an id from the stack table in `WORKFLOW.md` when one fits.
-3. Dispatch **planner**. READ: PRD, the ADRs, `H/05-architecture.md`, `design/flows.md`. HANDOFF: `H/05-plan.md`. Then record the plan: `node <skill-dir>/assets/state.js set plan=.claude/plans/<name>.plan.md`.
+3. Dispatch **planner** for `state.milestone`. READ: PRD, the ADRs, `H/05-architecture.md`, `design/flows.md`. HANDOFF: `H/05-plan.md`. Then record the plan: `node <skill-dir>/assets/state.js set plan=.claude/plans/<name>.plan.md`.
 4. Copy the slice list from the plan into `state.slices`. Prefer writing the list as JSON and importing it, so slices are matched by id instead of position:
 
 ```bash
 node <skill-dir>/assets/state.js slices import <file>
 ```
 
-   The importer appends new ids, preserves an existing slice's `status`, `branch`, `issue`, and `pr`, and rejects duplicate ids.
+   The JSON must include `milestone: <state.milestone>` on every slice. The importer appends new ids, preserves an existing slice's `status`, `branch`, `issue`, and `pr`, and rejects duplicate ids.
 5. **G3:** in human mode, run the same Plan Canvas loop as Stage 4 on `.claude/plans/<name>.plan.md`, dispatching planner (or architect, for ADR changes) to apply feedback. On `approve`:
 
 ```bash
@@ -139,7 +136,7 @@ node <skill-dir>/assets/state.js gate G3 approved --evidence .claude/plans/<name
 
    `guard.sh remove` deletes the two pre-approval rules; the state-writer rule stays installed. G2 is not part of this shortcut: it stays a human canvas verdict in both modes.
 
-6. After G3 is recorded (canvas `approve` in human mode, plan-file check in auto mode), make sure the approved slice list is in `state.slices` (the import in step 4 does this). **Do not create issues here for a greenfield project:** the remote does not exist until Stage 7. Stage 7 step 6 creates the issue batch after `gh repo create`, and the G3 approval authorizes it. When this stage runs for a later milestone, the repository already exists, so create one issue per new slice here after G3. In both cases, never duplicate an issue that a slice already has, and record each number with:
+6. After G3 is recorded (canvas `approve` in human mode, plan-file check in auto mode), make sure the approved slice list is in `state.slices` (the import in step 4 does this). **Do not create issues here for a greenfield project:** the remote does not exist until Stage 7. Stage 7 step 6 creates the issue batch after `gh repo create`, and the G3 approval authorizes it. When this stage runs for a later milestone, the repository already exists, so create one issue per slice whose `milestone` equals `state.milestone` here after G3. In both cases, never duplicate an issue that a slice already has, and record each number with:
 
 ```bash
 node <skill-dir>/assets/state.js slice <slice-id> issue=<n>
@@ -266,16 +263,24 @@ git switch <base-branch> && git pull --ff-only
 node <skill-dir>/assets/state.js gate G5 approved --slice <slice-id> --evidence "<PR URL>"   # add --auto in auto mode
 ```
 
-7. Mark the slice merged and set `current_slice` to the next pending slice id, or `null` when the milestone is done:
+7. Mark the slice merged and ask the helper what is next:
 
 ```bash
 node <skill-dir>/assets/state.js slice <slice-id> status=merged
-node <skill-dir>/assets/state.js set current_slice=<next-id> status=in-progress
+node <skill-dir>/assets/state.js next
 ```
 
-8. Choose the next step:
-   - **Next pending slice:** set `next_action` to `Start slice <next-id>: branch feat/<next-id> from <base-branch> and dispatch slice-runner with slices/<next-id>/brief.md`. In auto mode, **start it immediately and do not ask whether to continue**; in human mode, ask.
-   - **Milestone done but the PRD has more pending milestones:** run `node <skill-dir>/assets/state.js milestone <n> complete`, set `next_action` to the next planning step, then run Stage 5 steps 3–6 for the next milestone (planner, slice list, G3, then slice issues; the guard is gone, so G3 is the canvas approval in human mode and a plan-file record in auto mode). In auto mode, continue immediately; auto-record G3 only when the planner handoff is `done`, the plan exists, and the slices are imported.
+   It returns `{"action":"start|resume","slice":"<id>","milestone":<n>}`, `{"action":"blocked",...}`, or `{"action":"milestone-done","milestone":<n>}`.
+   - `start` (`status: pending`): set `current_slice=<id> status=in-progress`, branch, and run Stage 8.
+   - `resume` (`status: in-progress`): continue Stage 8 for that slice.
+   - `resume` (`status: in-review`): continue Stage 9 at the PR checks; leave the slice status unchanged.
+   - `blocked`: stop and report the slice and status.
+   - `milestone-done`: go to step 8.
+
+   In auto mode, act on `start` or `resume` immediately and do not ask whether to continue; in human mode, ask before starting a new slice. Read the mode from state each time; if it changed to `human`, ask.
+
+8. On `milestone-done`, choose the milestone step:
+   - **The PRD has more pending milestones:** run `node <skill-dir>/assets/state.js milestone <n> complete`, then `node <skill-dir>/assets/state.js set milestone=<next-n>` (the next pending number from the PRD table), set `next_action` to the next planning step, then run Stage 5 steps 3–6 for that milestone (planner, slice list, G3, then slice issues; the guard is gone, so G3 is the canvas approval in human mode and a plan-file record in auto mode). In auto mode, continue immediately; auto-record G3 only when the planner handoff is `done`, the plan exists, and the slices are imported.
    - **All MVP milestones done:** `node <skill-dir>/assets/state.js set stage=10 next_action="Run Stage 10: dispatch release-auditor three times in parallel"` and run Stage 10. In auto mode with `scope=gates`, run the release audits and deployment plan, then stop before the tag, release, and deploy and report; `scope=all` continues through them.
 
 Close-out check before ending the session, at an autonomous stop, or before `/compact`:
@@ -334,7 +339,7 @@ The state-writer guard stays installed after G3. When the run is finished, remov
 Executor: orchestrator. This replaces Stages 0–7 for an existing project. Do not run `bootstrap.sh`, `git init`, or `gh repo create`.
 
 1. Confirm this is a git repository with at least one commit. Determine `base_branch` from the repository's default branch (`gh repo view --json defaultBranchRef --jq .defaultBranchRef.name`) or the human's answer, falling back to `master` only when neither is available; record `base_commit` from `git rev-parse HEAD`. Also check that the absolute project path contains no `/docs/` or `/design/` segment; either one makes the guard exempt every file. Remember whether the guard will be ineffective. **Do not write state yet** — the state file is created in step 7.
-2. Require a clean working tree (`git status --porcelain` is empty). If it is dirty, ask the human to commit, stash, or stop. Never stash or commit for them.
+2. Require a clean working tree (`git status --porcelain` is empty). If it is dirty, ask the human to commit, stash, or stop. Never stash or commit for them. Also require `in_flight` to be null; if a step is in flight, resume or finish it before starting the feature.
 3. Read `CLAUDE.md`, every `.claude/prds/*.prd.md`, every `.claude/plans/*.plan.md`, `design/DESIGN.md`, `design/flows.md`, and `.github/workflows/`. Detect the stack's test, lint, typecheck, and build commands. Ask the human for any command you cannot find.
 4. Run the baseline commands yourself. Save `H/F0-baseline.md` with the command, exit code, duration, and the last 50 lines of any failure. If the baseline is red, ask: fix first, proceed with the known failures recorded, or stop. Remember the result and the human's choice; record them in step 8.
 5. Install the guard, then confirm it with `/ecc:hookify-list`:
@@ -432,7 +437,7 @@ No UI: G2 is `n/a` from F3; go to F5.
 ## Stage F5: Architecture and plan
 
 1. Dispatch **architect** only if the feature adds a component, contract, data model, migration, or security boundary. HANDOFF `H/F5-architecture.md`; ADRs stay `proposed`.
-2. Dispatch **planner**. READ: the spec, the existing plan, the ADRs, `design/flows.md`, `H/F0-baseline.md`. Use `state.milestone` as the new milestone number. It appends one new milestone and its slices to `.claude/plans/<name>.plan.md`, keeps existing slice ids and order, tags every new slice with `feature: <slug>`, and updates only the new milestone row of the PRD.
+2. Dispatch **planner**. READ: the spec, the existing plan, the ADRs, `design/flows.md`, `H/F0-baseline.md`. Use `state.milestone` as the new milestone number. It appends one new milestone and its slices to `.claude/plans/<name>.plan.md`, keeps existing slice ids and order, tags every new slice with `feature: <slug>` and `milestone: <state.milestone>`, and updates only the new milestone row of the PRD.
 3. Append the new slices with the importer (it matches by id and preserves each existing slice's `status`, `branch`, `issue`, and `pr`), then point at the first new slice:
 
 ```bash
@@ -440,7 +445,7 @@ node <skill-dir>/assets/state.js slices import <file>
 node <skill-dir>/assets/state.js set stage=F6 current_slice=<first-new-id>
 ```
 
-   Keep each slice's `feature: <slug>` tag in the JSON; never reorder existing slices.
+   Keep each slice's `feature: <slug>` and `milestone: <state.milestone>` tags in the JSON; never reorder existing slices.
 4. **G3:** in human mode, run the same Plan Canvas loop as Stage 4 on the updated plan. On `approve`:
 
 ```bash
@@ -467,7 +472,7 @@ node <skill-dir>/assets/state.js gate G3 approved --evidence .claude/plans/<name
 
 ## Stage F6: Build and review the feature slices
 
-Run Stage 8 and Stage 9 for each slice tagged with this feature, in plan order. The slice-runner, branch, verification, review, PR, and G5 procedures are unchanged; `<base-branch>` resolves to `state.base_branch`, and each PR body must contain `Closes #<issue>` and add `Part of feature: <slug>` next to it. In auto mode, the continuous slice loop applies here too: after each merge, start the next tagged slice without asking.
+Run Stage 8 and Stage 9 for each slice tagged with this feature, in plan order; `state.milestone` is the feature milestone, so `state.js next` returns the next feature slice. The slice-runner, branch, verification, review, PR, and G5 procedures are unchanged; `<base-branch>` resolves to `state.base_branch`, and each PR body must contain `Closes #<issue>` and add `Part of feature: <slug>` next to it. In auto mode, the continuous slice loop applies here too: after each merge, start the next tagged slice without asking.
 
 ## Stage F7: Feature wrap-up
 

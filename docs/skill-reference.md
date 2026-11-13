@@ -72,14 +72,14 @@ When you explicitly opt out of manual review, record the instruction:
 node <skill-dir>/assets/state.js review auto --scope gates --reason "<your words>"
 ```
 
-`gates` (the default) auto-answers gates and clarifying questions with the recommended option, and its G5 approval authorizes the PR merge itself. In auto mode the run then continues to the next slice without asking. G3 is recorded from the plan file in auto mode; G2 stays a human Plan Canvas approval in both modes. It still stops when the recommendation is to fix, re-run, or stop. `all` also covers the outward-facing confirmations outside the gates (repo settings, releases, deploys, deletions). `review human` restores manual approval. Auto-approved gates carry `auto: true` and the recorded reason, and a gate whose criteria fail is never auto-approved.
+`gates` (the default) auto-answers gates and clarifying questions with the recommended option, and its G5 approval authorizes the PR merge itself. In auto mode the run then continues to the next slice without asking. G3 is recorded from the plan file in auto mode; G2 stays a human Plan Canvas approval in both modes. The orchestrator re-reads the mode from state before every gate and loop iteration; switching to `review human` takes effect at the next gate or slice boundary, and a running subagent finishes first. A feature run snapshots and restores the paused run's mode. It still stops when the recommendation is to fix, re-run, or stop. `all` also covers the outward-facing confirmations outside the gates (repo settings, releases, deploys, deletions). `review human` restores manual approval. Auto-approved gates carry `auto: true` and the recorded reason, and a gate whose criteria fail is never auto-approved.
 
 The skill cannot bypass Claude Code's own Bash permission prompts. If `gh pr merge` still asks after G5 is auto-approved, that is the harness layer: add `Bash(gh pr merge:*)` (and any other command that still prompts) to `.claude/settings.local.json`, or approve once and choose "always allow".
 
 ## Files it creates in your project
 
 ```text
-.claude/ecc-workflow/state.json    current stage, gates, slices, next action  (local, gitignored)
+.claude/ecc-workflow/state.json    current stage, gates, milestone, slices, next action  (local, gitignored)
 .claude/ecc-workflow/handoffs/     subagent results per stage                 (local, gitignored)
 .claude/ecc-workflow/slices/<id>/  briefs, verification, review findings      (local, gitignored)
 .claude/ecc-workflow/screens/      preview and QA screenshots                 (local, gitignored)
