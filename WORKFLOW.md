@@ -38,13 +38,13 @@ flowchart TD
 | Gate | A human approves | Evidence |
 |---|---|---|
 | G1 | Problem, users, MVP, out-of-scope list | `.claude/prds/<name>.prd.md` |
-| G2 | What the product looks like and how it behaves | Plan Canvas **Approve** on `design/preview/index.html` |
-| G3 | Stack, architecture, slice order | Plan Canvas **Approve** on `.claude/plans/<name>.plan.md`, ADRs |
+| G2 | What the product looks like and how it behaves | Plan Canvas **Approve** on `design/preview/index.html` (human in both modes) |
+| G3 | Stack, architecture, slice order | Plan Canvas **Approve** on `.claude/plans/<name>.plan.md`, ADRs; in auto mode, the plan file and planner handoff recorded with `--auto` |
 | G4 | The empty product builds, tests, and deploys | Green CI run on `master` |
 | G5 | Each slice | Green CI, no open CRITICAL or HIGH findings, merged PR |
 | G6 | The running release | Production audit, post-deploy checks, tagged release |
 
-Agents stop at every gate and wait. Silence is not approval. Whenever the agent needs an answer — a gate, a clarifying question, or an outward-action confirmation — it asks through the `AskUserQuestion` tool with the recommended option first, except G2 and G3, which you approve in Plan Canvas; free-form answers such as a repository name or version are asked in plain chat.
+Agents stop at every gate and wait. Silence is not approval. Whenever the agent needs an answer — a gate, a clarifying question, or an outward-action confirmation — it asks through the `AskUserQuestion` tool with the recommended option first, except G2, which you approve in Plan Canvas; in auto mode G3 is recorded from the plan file. Free-form answers such as a repository name or version are asked in plain chat.
 
 ## Before your first project
 
@@ -136,7 +136,7 @@ What the guard does and doesn't do:
 
 ## Autonomous mode
 
-If you explicitly opt out of review, record it with `state.js review auto --reason "<your words>"`. Gates and questions then use the recommended option and are marked `--auto`; the run still stops when the recommendation is to fix, re-run, or stop. `--scope all` also covers the outward confirmations. `review human` restores manual approval.
+If you explicitly opt out of review, record it with `state.js review auto --reason "<your words>"`. Gates and questions then use the recommended option and are marked `--auto`; G5's auto-approval also authorizes the PR merge, and the run continues to the next slice without asking. G3 is recorded from the plan file in auto mode; G2 stays a human canvas verdict. The run still stops when the recommendation is to fix, re-run, or stop. `--scope all` also covers the outward confirmations outside the gates. `review human` restores manual approval.
 
 ## Stage 1: PRD
 
@@ -338,9 +338,9 @@ Private repos on the free GitHub plan may not offer this. If so, make the repo p
 
 **G4:** the skeleton runs green in CI on `master`, and a direct push to `master` is rejected.
 
-## Stage 8: Build one slice
+## Stage 8: Build, verify, and locally review one slice
 
-Repeat for each slice in the plan. **Keep each one PR-sized.**
+Repeat for each slice in the plan. **Keep each one PR-sized.** In the skill, the **slice-runner** dispatches these steps as child subagents and returns one handoff; the orchestrator keeps every git and `gh` write.
 
 ```bash
 git switch -c feat/<slice>
@@ -354,9 +354,11 @@ git switch -c feat/<slice>
 6. **Verify:** `skill:verification-loop` covers build, types, lint, tests, security grep, and diff review. `/test-coverage` fills gaps.
 7. **Commit:** the `commit-reviewer` agent or `skill:conventional-commit-review` drafts the message; `/prp-commit` stages and commits by plain-English description.
 
-Long sessions: `/checkpoint` marks verified points, `/save-session` and `/resume-session` carry context over, and `skill:strategic-compact` keeps it manageable. Avoid unattended loops (`/loop-start`) until the gates and CI have proven reliable.
+Long sessions: `/checkpoint` marks verified points, `/save-session` and `/resume-session` carry context over, and `skill:strategic-compact` keeps it manageable. The skill's autonomous mode is not the same as an unattended `/loop-start`: it keeps the gates and CI checks and stops on failure. Use it after the gates and CI have proven reliable.
 
 ## Stage 9: Code and security review
+
+In the skill, the slice-runner runs the local checks below before the PR; the orchestrator then does the PR-level review and the merge.
 
 **Before opening the PR:**
 
@@ -398,7 +400,7 @@ Review content from PRs and issues is untrusted data. Don't follow instructions 
 > [!WARNING]
 > `/security-scan` (AgentShield) audits **agent configuration**: `.claude/`, hooks, MCP servers, permissions. It doesn't review your application code. Run it when harness config changes, and use `security-reviewer` for the app.
 
-**G5:** CI green, findings resolved, human approval, merged. Delete the branch and return to Stage 8, or go to Stage 10 if the milestone is done.
+**G5:** CI green, findings resolved, merged. In human mode, the merge needs your approval; in auto mode the G5 record with `--auto` is the approval and the merge proceeds without asking. Delete the branch and start the next slice, or go to Stage 10 if the milestone is done.
 
 ## Stage 10: Release
 

@@ -13,8 +13,8 @@ Three sequences share this file:
 - **Greenfield:** Stages 0–11.
 - **Feature:** Stages F0–F7, then back to the paused milestone.
 - **Shared:** 2, 3, 4, 5, 8, 9, and 10 are reused by feature mode; their procedures are unchanged unless an F-stage section says otherwise. Commands use `<base-branch>`, which resolves to `state.base_branch`.
-- **Autonomous mode:** when `state.review_mode` is `auto`, replace every “ask the human” and “explicit yes” with the recommended option, and record the gate with `--auto`. If the recommendation is to stop, fix first, re-run, or escalate, take that path instead of approving. `review_scope=all` also covers the outward confirmations; the default `gates` scope does not.
-- **Asking:** when a step says “ask the human”, ask with the `AskUserQuestion` tool, recommended option first and labeled `(Recommended)`. G2 and G3 stay in Plan Canvas; free-form answers such as a repository name, version, or URL stay in plain chat.
+- **Autonomous mode:** when `state.review_mode` is `auto`, replace every “ask the human” and “explicit yes” with the recommended option, except G2, and record the gate with `--auto`. If the recommendation is to stop, fix first, re-run, or escalate, take that path instead of approving. G5's auto-approval also authorizes the merge. G3 is recorded from the plan file and planner handoff; G2 stays a human canvas verdict. `review_scope=all` covers the outward confirmations outside the gates; the default `gates` scope does not. After each merge, continue to the next slice without asking.
+- **Asking:** when a step says “ask the human”, ask with the `AskUserQuestion` tool, recommended option first and labeled `(Recommended)`. G2 stays in Plan Canvas; in auto mode G3 is recorded from the plan file. Free-form answers such as a repository name, version, or URL stay in plain chat.
 
 ## Stage 0: Bootstrap
 
@@ -108,6 +108,8 @@ git add design && git commit -m "docs: approve HTML preview"
 node <skill-dir>/assets/state.js gate G2 approved --evidence design/preview/index.html
 ```
 
+   **G2 is human in both modes.** Even when `review_mode=auto`, do not record G2 with `--auto`; open the canvas and wait for the human's `approve`. This is the one gate auto mode does not answer.
+
 ## Stage 5: Architecture and plan
 
 1. Dispatch **architect**. READ: PRD, `H/02-research.md`, `design/DESIGN.md`, `design/flows.md`, `design/preview/index.html`. HANDOFF: `H/05-architecture.md`.
@@ -120,7 +122,7 @@ node <skill-dir>/assets/state.js slices import <file>
 ```
 
    The importer appends new ids, preserves an existing slice's `status`, `branch`, `issue`, and `pr`, and rejects duplicate ids.
-5. **G3:** run the same Plan Canvas loop as Stage 4 on `.claude/plans/<name>.plan.md`, dispatching planner (or architect, for ADR changes) to apply feedback. On `approve`:
+5. **G3:** in human mode, run the same Plan Canvas loop as Stage 4 on `.claude/plans/<name>.plan.md`, dispatching planner (or architect, for ADR changes) to apply feedback. On `approve`:
 
 ```bash
 ecc-plan-canvas end .claude/plans/<name>.plan.md
@@ -128,9 +130,16 @@ bash <skill-dir>/assets/guard.sh remove
 node <skill-dir>/assets/state.js gate G3 approved --evidence .claude/plans/<name>.plan.md
 ```
 
-   `guard.sh remove` deletes the two pre-approval rules; the state-writer rule stays installed.
+   In auto mode, do not open or await the canvas. Check that `H/05-plan.md` is `Status: done`, the plan file exists, the slice list is imported, and no open question remains; then remove the guard and record the gate from the plan file:
 
-6. After `approve`, make sure the approved slice list is in `state.slices` (the import in step 4 does this). **Do not create issues here for a greenfield project:** the remote does not exist until Stage 7. Stage 7 step 6 creates the issue batch after `gh repo create`, and the G3 approval authorizes it. When this stage runs for a later milestone, the repository already exists, so create one issue per new slice here after G3. In both cases, never duplicate an issue that a slice already has, and record each number with:
+```bash
+bash <skill-dir>/assets/guard.sh remove
+node <skill-dir>/assets/state.js gate G3 approved --evidence .claude/plans/<name>.plan.md --auto
+```
+
+   `guard.sh remove` deletes the two pre-approval rules; the state-writer rule stays installed. G2 is not part of this shortcut: it stays a human canvas verdict in both modes.
+
+6. After G3 is recorded (canvas `approve` in human mode, plan-file check in auto mode), make sure the approved slice list is in `state.slices` (the import in step 4 does this). **Do not create issues here for a greenfield project:** the remote does not exist until Stage 7. Stage 7 step 6 creates the issue batch after `gh repo create`, and the G3 approval authorizes it. When this stage runs for a later milestone, the repository already exists, so create one issue per new slice here after G3. In both cases, never duplicate an issue that a slice already has, and record each number with:
 
 ```bash
 node <skill-dir>/assets/state.js slice <slice-id> issue=<n>
@@ -194,9 +203,9 @@ node <skill-dir>/assets/state.js gate G4 approved --evidence "<CI run URL>"
 node <skill-dir>/assets/state.js set stage=8 current_slice=<first-pending-id>
 ```
 
-## Stage 8: Build one slice
+## Stage 8: Build, verify, and locally review one slice
 
-Repeat per slice. One slice equals one branch equals one PR.
+Repeat per slice. One slice equals one branch equals one PR. The **slice-runner** does the child work; the orchestrator does every git write and keeps the state.
 
 1. Mark the slice current and branch from an up-to-date `<base-branch>`:
 
@@ -207,67 +216,69 @@ node <skill-dir>/assets/state.js gate G5 pending --slice <slice-id>
 git switch <base-branch> && git pull --ff-only && git switch -c feat/<slice-id>
 ```
 
-2. Extract the slice's section of the plan into `S/brief.md`. Add the preview screens it implements and the stack's test command.
-3. Dispatch **implementer**. READ: `S/brief.md`, `CLAUDE.md`, relevant ADRs, plus `design/preview/index.html` for UI slices. HANDOFF: `S/implement.md`.
+2. Extract the slice's section of the plan into `S/brief.md`. Add the preview screens it implements and the stack's test command. Select the child roles for this slice and list them in the brief in execution order:
+   - always: `implementer`, `verifier`, `build-fixer` (dispatch only if the build breaks)
+   - `e2e` when the slice includes a critical journey
+   - reviewers: always `ecc:code-reviewer` and the stack reviewer; `ecc:security-reviewer` when `security: true` or the diff touches auth, user input, queries, file paths, external APIs, crypto, payments, or secrets; `ecc:a11y-architect` when `ui: true`; `ecc:performance-optimizer` for hot paths, bundle growth, or slow queries; `ecc:database-reviewer` for schema or query changes
+   - `fixer` for the review findings
+
+   Give each child its handoff path under `S/` (`implement.md`, `verify.md`, `e2e.md`, `review-<kind>.md`, `findings.md`, `build-<n>.md`).
+
+3. Dispatch **slice-runner** with `CHILD ROLES` and `CHILD HANDOFFS`. It runs: implementer → build-fixer if the build breaks → verifier and e2e in parallel → reviewers in parallel → fixer for CRITICAL/HIGH/MEDIUM → re-run only the reviewers that raised findings. It writes `S/runner.md` with the verification result, finding counts, deferred LOWs, the proposed Conventional Commit message, and the PR body with `Closes #<issue>`.
 4. If it returns `needs-human` because the design must change: run `goto 4` with the human for that screen, re-approve G2, then resume this slice.
-5. Run the test command yourself. On a build break, dispatch **build-fixer** with the error saved to `S/build-<n>.md`.
-6. In parallel: **verifier** (HANDOFF `S/verify.md`) and, when the slice includes a critical journey, **e2e** (HANDOFF `S/e2e.md`).
-7. Any FAIL: dispatch fixer or build-fixer with the failing checks, then re-verify. Two rounds at most, then escalate.
-8. Commit with a Conventional Commit message written from the handoff summaries, for example `feat(<scope>): <slice title>`.
+5. Read only `S/runner.md`'s `Status` and `## Summary`. Check that the claimed outputs exist and run the test command yourself once. On a failure, re-dispatch the slice-runner with a narrower `CHILD ROLES` list (fixer, verifier, build-fixer if needed, the affected reviewers) at most twice, then escalate.
+6. Commit with the message from `S/runner.md`.
 
-Exit: verification passes.
+Exit: verification passes, local review findings are fixed or explicitly deferred, and the commit is made.
 
-## Stage 9: Code and security review
+## Stage 9: PR, review, and merge
 
-1. Dispatch reviewers **in parallel**, each read-only with scope `git diff <base-branch>...HEAD`:
-   - always: `ecc:code-reviewer` and the stack reviewer (stack table in `WORKFLOW.md`)
-   - `security: true` slice or a diff touching auth, user input, queries, file paths, external APIs, crypto, payments, or secrets: `ecc:security-reviewer`
-   - `ui: true`: `ecc:a11y-architect` (review only)
-   - hot paths, bundle growth, slow queries: `ecc:performance-optimizer` (review only)
-   - schema or query changes: `ecc:database-reviewer`
-2. Each reviewer writes its full report to `S/review-<kind>.md` when its toolset has Write; otherwise save only the returned findings table to that path. Merge the tables into `S/findings.md`, removing duplicates.
-3. CRITICAL, HIGH, or MEDIUM findings: dispatch **fixer** with those rows. LOW findings are recorded in `S/findings.md` as deferred unless the human asks for them. Re-run only the reviewers that raised them. A HIGH (or a deliberately accepted MEDIUM) may be accepted only with the human's written reason, recorded in `S/findings.md` and the PR body.
-4. Push and open the PR:
+The slice-runner already ran the local code and security review in Stage 8. Its `S/runner.md` has the finding counts; reuse them instead of re-dispatching the same reviewers.
+
+1. Push and open the PR:
 
 ```bash
 git push -u origin feat/<slice-id>
 ```
 
-   Then run `/ecc:pr <base-branch>`. The body must contain `Closes #<issue>` so merging the PR closes the issue; if `state.base_branch` is not the repository default branch, close the issue explicitly after the merge. Also add the MEDIUM findings for traceability: MEDIUMs are fixed before merge, so this list records what was fixed plus any accepted or deferred item.
+   Then run `/ecc:pr <base-branch>`. The body must contain `Closes #<issue>` so merging the PR closes the issue; if `state.base_branch` is not the repository default branch, close the issue explicitly after the merge. Include the MEDIUM findings from `S/runner.md` for traceability: MEDIUMs are fixed before merge, so this list records what was fixed plus any accepted or deferred item.
 
 ```bash
 node <skill-dir>/assets/state.js slice <slice-id> status=in-review
 ```
-5. Watch checks in the background, and handle failures with build-fixer:
+
+2. Watch checks in the background, and handle failures with a build-fixer dispatch (or a narrow slice-runner with `CHILD ROLES: build-fixer`):
 
 ```bash
 gh pr checks <n> --watch
 ```
 
-6. PR-level review: `/ecc:orch-review <n>` for security slices, otherwise `/ecc:review-pr <n>`. Save the output to `S/pr-review.md`. Use `/ecc:santa-loop` instead for auth, payments, or migrations if the human wants it. New CRITICAL, HIGH, or MEDIUM findings go back to step 3.
-
-**G5:** show the PR link, check status, and finding counts by severity, and ask "merge?". On an explicit yes:
+3. PR-level review: `/ecc:orch-review <n>` for security slices, otherwise `/ecc:review-pr <n>`. Save the output to `S/pr-review.md`. Use `/ecc:santa-loop` instead for auth, payments, or migrations if the human wants it.
+4. New CRITICAL, HIGH, or MEDIUM findings: dispatch a **fix slice-runner** with `CHILD ROLES: fixer, verifier, build-fixer (if needed), <affected reviewers>`, the findings file, and HANDOFF `S/runner-fix-<n>.md`. At most two rounds, then escalate. Record the fixed and deferred items in that handoff and carry them into the PR body.
+5. **G5:** show the PR link, check status, and finding counts by severity.
+   - **Human mode:** ask "merge?" with `AskUserQuestion`. On an explicit merge, go to step 6. On anything else, set `status=blocked`, record the reason in `S/findings.md`, and stop.
+   - **Auto mode:** do not ask. Go straight to step 6; the G5 auto-approval is the merge authorization.
+6. Merge and record the gate:
 
 ```bash
 gh pr merge <n> --squash --delete-branch
 git switch <base-branch> && git pull --ff-only
+node <skill-dir>/assets/state.js gate G5 approved --slice <slice-id> --evidence "<PR URL>"   # add --auto in auto mode
 ```
 
-Mark the slice merged and point `current_slice` at the next step:
+7. Mark the slice merged and set `current_slice` to the next pending slice id, or `null` when the milestone is done:
 
 ```bash
-node <skill-dir>/assets/state.js gate G5 approved --slice <slice-id> --evidence "<PR URL>"
 node <skill-dir>/assets/state.js slice <slice-id> status=merged
 node <skill-dir>/assets/state.js set current_slice=<next-id> status=in-progress
 ```
 
-Set `current_slice` to the next pending slice id, or to `null` when the milestone is done. Then set `next_action` for the route that applies:
+8. Choose the next step:
+   - **Next pending slice:** set `next_action` to `Start slice <next-id>: branch feat/<next-id> from <base-branch> and dispatch slice-runner with slices/<next-id>/brief.md`. In auto mode, **start it immediately and do not ask whether to continue**; in human mode, ask.
+   - **Milestone done but the PRD has more pending milestones:** run `node <skill-dir>/assets/state.js milestone <n> complete`, set `next_action` to the next planning step, then run Stage 5 steps 3–6 for the next milestone (planner, slice list, G3, then slice issues; the guard is gone, so G3 is the canvas approval in human mode and a plan-file record in auto mode). In auto mode, continue immediately; auto-record G3 only when the planner handoff is `done`, the plan exists, and the slices are imported.
+   - **All MVP milestones done:** `node <skill-dir>/assets/state.js set stage=10 next_action="Run Stage 10: dispatch release-auditor three times in parallel"` and run Stage 10. In auto mode with `scope=gates`, run the release audits and deployment plan, then stop before the tag, release, and deploy and report; `scope=all` continues through them.
 
-- **Next pending slice:** `next_action` = `Start slice <next-id>: branch feat/<next-id> from <base-branch> and dispatch implementer with slices/<next-id>/brief.md`. Back to Stage 8.
-- **Milestone done but the PRD has more pending milestones:** run `node <skill-dir>/assets/state.js milestone <n> complete`, set `next_action` to the next planning step, then run Stage 5 steps 3–6 for the next milestone (planner, slice list, G3, then slice issues; the guard is gone, so G3 is only the canvas approval).
-- **All MVP milestones done:** `node <skill-dir>/assets/state.js set stage=10 next_action="Run Stage 10: dispatch release-auditor three times in parallel"`.
-
-Close-out check before ending the session or running `/compact`:
+Close-out check before ending the session, at an autonomous stop, or before `/compact`:
 
 ```bash
 node <skill-dir>/assets/state.js status
@@ -276,6 +287,8 @@ node <skill-dir>/assets/state.js status
 `in_flight` must be `null` and `next_action` must name the exact next step. Anything the next session needs that exists only in this conversation — a deferred MEDIUM, an accepted risk, a scope change — belongs in `S/findings.md` or `next_action` now: a new session and `/compact` keep what is on disk, not what was said.
 
 ## Stage 10: Release
+
+Auto mode with `scope=gates` stops before the tag, release, and deploy steps; `scope=all` is required to run them unattended.
 
 1. In parallel, dispatch **release-auditor** three times: production audit (`H/10-audit-production.md`), full-repo security (`H/10-audit-security.md`), and dependency audit (`H/10-audit-deps.md`).
 2. CRITICAL, HIGH, or MEDIUM findings become fix slices: add them to `state.slices` and run them through Stages 8–9 first. LOW findings are recorded in the audit handoff as deferred. These audit-driven slices are outside the G3 batch: before creating their issues, ask the human (hard rule 9 and the confirmation list), or record the release audit as a new authorized batch.
@@ -303,8 +316,8 @@ Ask what the work is, classify it, and route it:
 
 | Work | Route |
 |---|---|
-| New capability that changes UI or flows | `goto 4` for the affected screens (G2), then planner for one new milestone (G3 canvas), then Stages 8–9 |
-| New capability with no UI change | planner for one new milestone (G3 canvas), then Stages 8–9 |
+| New capability that changes UI or flows | `goto 4` for the affected screens (G2), then planner for one new milestone (G3 canvas or auto-record), then Stages 8–9 |
+| New capability with no UI change | planner for one new milestone (G3 canvas or auto-record), then Stages 8–9 |
 | Behavior change | `/ecc:orch-change-feature` |
 | Bug | `/ecc:orch-fix-defect` |
 | Refactor | `/ecc:orch-refine-code` or `/ecc:refactor-clean` |
@@ -412,6 +425,8 @@ Run Stage 4 with these deltas: the preview-builder integrates the new screens an
 node <skill-dir>/assets/state.js gate G2 approved --evidence design/preview/index.html
 ```
 
+G2 stays human in auto mode: do not record it with `--auto`.
+
 No UI: G2 is `n/a` from F3; go to F5.
 
 ## Stage F5: Architecture and plan
@@ -426,7 +441,7 @@ node <skill-dir>/assets/state.js set stage=F6 current_slice=<first-new-id>
 ```
 
    Keep each slice's `feature: <slug>` tag in the JSON; never reorder existing slices.
-4. **G3:** the same Plan Canvas loop as Stage 4 on the updated plan. On `approve`:
+4. **G3:** in human mode, run the same Plan Canvas loop as Stage 4 on the updated plan. On `approve`:
 
 ```bash
 ecc-plan-canvas end .claude/plans/<name>.plan.md
@@ -437,12 +452,22 @@ git commit -m "docs: approve feature plan for <slug>"
 node <skill-dir>/assets/state.js gate G3 approved --evidence .claude/plans/<name>.plan.md
 ```
 
-   Flip the new ADRs to `accepted` before committing.
+   In auto mode, do not open or await the canvas. Check that the planner handoff is `Status: done`, the plan file exists, the new slices are imported, and no open question remains; flip the new ADRs to `accepted`, remove the guard, commit, and record the gate:
+
+```bash
+bash <skill-dir>/assets/guard.sh remove
+git add .claude/plans
+if [ -d docs/adr ]; then git add docs/adr; fi
+git commit -m "docs: approve feature plan for <slug>"
+node <skill-dir>/assets/state.js gate G3 approved --evidence .claude/plans/<name>.plan.md --auto
+```
+
+   G2 is not part of this shortcut: it stays a human canvas verdict in both modes.
 5. Create exactly one issue per new slice, titled `[<slice-id>] <title>`, and record each number with `node <skill-dir>/assets/state.js slice <slice-id> issue=<n>`; this is required before F6. The G3 approval authorizes this batch. Never create a duplicate for a slice that already has one.
 
 ## Stage F6: Build and review the feature slices
 
-Run Stage 8 and Stage 9 for each slice tagged with this feature, in plan order. The branch, verification, review, PR, and G5 procedures are unchanged; `<base-branch>` resolves to `state.base_branch`, and each PR body must contain `Closes #<issue>` and add `Part of feature: <slug>` next to it.
+Run Stage 8 and Stage 9 for each slice tagged with this feature, in plan order. The slice-runner, branch, verification, review, PR, and G5 procedures are unchanged; `<base-branch>` resolves to `state.base_branch`, and each PR body must contain `Closes #<issue>` and add `Part of feature: <slug>` next to it. In auto mode, the continuous slice loop applies here too: after each merge, start the next tagged slice without asking.
 
 ## Stage F7: Feature wrap-up
 

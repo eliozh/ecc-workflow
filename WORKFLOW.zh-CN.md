@@ -38,13 +38,13 @@ flowchart TD
 | 闸门 | 人类批准的内容 | 证据 |
 |---|---|---|
 | G1 | 问题、用户、MVP、不做清单 | `.claude/prds/<name>.prd.md` |
-| G2 | 产品的外观与行为 | 在 Plan Canvas 中对 `design/preview/index.html` 点击 **Approve** |
-| G3 | 技术栈、架构、切片顺序 | 在 Plan Canvas 中对 `.claude/plans/<name>.plan.md` 点击 **Approve**，以及 ADR |
+| G2 | 产品的外观与行为 | 在 Plan Canvas 中对 `design/preview/index.html` 点击 **Approve**（两种模式都需要人工） |
+| G3 | 技术栈、架构、切片顺序 | 在 Plan Canvas 中对 `.claude/plans/<name>.plan.md` 点击 **Approve**，以及 ADR；自动模式下用计划文件和 planner handoff 以 `--auto` 记录 |
 | G4 | 空产品可以构建、测试和部署 | `master` 上的 CI 运行通过 |
 | G5 | 每个切片 | CI 通过、无未解决的 CRITICAL 或 HIGH 问题、PR 已合并 |
 | G6 | 运行中的发布版本 | 生产就绪审计、部署后检查、已打标签的发布 |
 
-代理在每个闸门处停下并等待。沉默不等于批准。只要代理需要你回答——无论是闸门、澄清问题还是对外操作确认——都会用 `AskUserQuestion` 工具提问，并把推荐方案放在第一项；G2 和 G3 仍在 Plan Canvas 中批准，仓库名、版本号、URL 这类自由文本则在对话里直接询问。
+代理在每个闸门处停下并等待。沉默不等于批准。只要代理需要你回答——无论是闸门、澄清问题还是对外操作确认——都会用 `AskUserQuestion` 工具提问，并把推荐方案放在第一项；G2 仍在 Plan Canvas 中批准，自动模式下 G3 从计划文件记录，仓库名、版本号、URL 这类自由文本则在对话里直接询问。
 
 ## 第一个项目之前
 
@@ -136,7 +136,7 @@ git add -A && git commit -m "chore: bootstrap repository"
 
 ## 自主模式
 
-如果你明确选择不做人工审核，用 `state.js review auto --reason "<你的原话>"` 记录。之后闸门和问题都使用推荐方案并以 `--auto` 标记；如果推荐是修复、重跑或停止，流程仍然照做。`--scope all` 还会覆盖对外操作的确认。`review human` 恢复人工审批。
+如果你明确选择不做人工审核，用 `state.js review auto --reason "<你的原话>"` 记录。之后闸门和问题都使用推荐方案并以 `--auto` 标记；G5 的自动批准同时授权合并 PR，并在合并后自动开始下一个 slice，不再询问。自动模式下 G3 从计划文件记录；G2 在两种模式下都保留人工 canvas 裁决。如果推荐是修复、重跑或停止，流程仍然照做。`--scope all` 还会覆盖闸门之外的对外操作确认。`review human` 恢复人工审批。
 
 ## 第 1 阶段：PRD
 
@@ -338,9 +338,9 @@ GitHub 免费计划的私有仓库可能不提供此功能。如果是这样，�
 
 **G4：** 骨架在 `master` 上的 CI 中通过，并且直接推送到 `master` 会被拒绝。
 
-## 第 8 阶段：构建一个切片
+## 第 8 阶段：构建、验证并本地评审一个切片
 
-对计划中的每个切片重复执行。**每个切片控制在一个 PR 的大小。**
+对计划中的每个切片重复执行。**每个切片控制在一个 PR 的大小。** 在技能中，**slice-runner** 把这些步骤作为子代理派发，只回传一份 handoff；所有 git 与 `gh` 写操作仍由编排者执行。
 
 ```bash
 git switch -c feat/<slice>
@@ -354,9 +354,11 @@ git switch -c feat/<slice>
 6. **验证：** `skill:verification-loop` 涵盖构建、类型、lint、测试、安全扫描和 diff 审查。`/test-coverage` 补足缺口。
 7. **提交：** `commit-reviewer` 代理或 `skill:conventional-commit-review` 起草提交信息；`/prp-commit` 根据自然语言描述暂存并提交。
 
-长会话：`/checkpoint` 标记已验证的节点，`/save-session` 和 `/resume-session` 延续上下文，`skill:strategic-compact` 控制上下文规模。在闸门和 CI 被证明可靠之前，避免无人值守的循环（`/loop-start`）。
+长会话：`/checkpoint` 标记已验证的节点，`/save-session` 和 `/resume-session` 延续上下文，`skill:strategic-compact` 控制上下文规模。技能的自主模式不同于无人值守的 `/loop-start`：它保留闸门和 CI 检查，失败时停止。请在闸门和 CI 被证明可靠之后使用。
 
 ## 第 9 阶段：代码与安全审查
+
+在技能中，slice-runner 在 PR 之前执行下面的本地检查；编排者随后做 PR 级评审和合并。
 
 **打开 PR 之前：**
 
@@ -398,7 +400,7 @@ gh pr checks --watch   # after /pr master has opened it
 > [!WARNING]
 > `/security-scan`（AgentShield）审计的是**代理配置**：`.claude/`、钩子、MCP 服务器、权限。它不审查你的应用代码。在 harness 配置变更时运行它，应用安全交给 `security-reviewer`。
 
-**G5：** CI 通过、问题已解决、人类批准、已合并。删除分支后回到第 8 阶段；如果里程碑已完成，则进入第 10 阶段。
+**G5：** CI 通过、问题已解决、已合并。人工模式下合并需要你批准；自动模式下以 `--auto` 记录的 G5 就是批准，直接合并，不再询问。删除分支后开始下一个切片；如果里程碑已完成，则进入第 10 阶段。
 
 ## 第 10 阶段：发布
 
