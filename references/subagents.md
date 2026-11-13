@@ -1,6 +1,6 @@
 # Subagent contract
 
-Every subagent gets one bounded task, reads its inputs from files, writes its results to files, and returns a short summary. It never talks to the human and never decides a gate. Autonomous mode never changes that: the orchestrator answers the prompt and records the gate; a subagent still never approves one or takes an outward action. Only the **slice-runner** may dispatch further subagents, and only the child roles named in its brief for its own slice. It still never talks to the human, approves a gate, or runs a git or `gh` write.
+Every subagent gets one bounded task, reads its inputs from files, writes its results to files, and returns a short summary. It never talks to the human and never decides a gate. Autonomous mode never changes that: the orchestrator answers the prompt and records the gate; a subagent still never approves one or takes an outward action. A subagent does not read or depend on `review_mode`; the orchestrator owns every mode decision. Only the **slice-runner** may dispatch further subagents, and only the child roles named in its brief for its own slice. It still never talks to the human, approves a gate, or runs a git or `gh` write.
 
 ## Brief template
 
@@ -8,12 +8,13 @@ Fill every field. Copy the **standard do-not list** and the role's **Do not** li
 
 ```text
 ROLE: <role name from the table below>
-PROJECT: <absolute project root>   STAGE: <N or F1–F7>   SLICE: <id or none>
+PROJECT: <absolute project root>   STAGE: <N or F1–F7>   SLICE: <id or none>   MILESTONE: <n or none>
 BASE BRANCH: <state.base_branch; master for greenfield unless changed>
 GOAL: <one deliverable, one sentence>
 READ: <exact paths; do not explore beyond these unless the task needs it>
 LOAD SKILLS: <ecc:skill names to load with the Skill tool, or none>
 WRITE ONLY: <exact paths or globs>   HANDOFF: <handoff file path>
+HANDOFF HEADER: Status, Task, Outputs, Summary, Needs human, Details
 CHILD ROLES: <slice-runner only: child roles in execution order, or none>
 CHILD HANDOFFS: <slice-runner only: one path per child, same order>
 DO:
@@ -94,7 +95,7 @@ RETURN: Status line, files written, blockers. 15 lines or fewer.
 - **Do not:** write application code, scaffold, or install anything. Contradict the approved preview; if the preview is infeasible, return `needs-human` with the specific screen. Mark any ADR as accepted; leave it `proposed` until G3.
 
 ### planner
-- **Do:** follow the PRD-artifact format of the `/plan` command to write `.claude/plans/<name>.plan.md` for the next pending milestone. Order work as thin vertical slices: the first is one end-to-end path. For each slice give an id (`NN-kebab`), a title, the files and tests expected, whether it touches UI (`ui`) or a security trigger (`security`), acceptance criteria, and the preview screens it implements. Update only the selected milestone row of the PRD table. In feature mode (F5), append one new milestone to the existing plan, keep existing slice ids and order, tag every new slice with `feature: <slug>`, and update only the new milestone row of the PRD.
+- **Do:** follow the PRD-artifact format of the `/plan` command to write `.claude/plans/<name>.plan.md` for `state.milestone` (the next pending milestone). Order work as thin vertical slices: the first is one end-to-end path. For each slice give an id (`NN-kebab`), a title, its milestone number (`milestone`), the files and tests expected, whether it touches UI (`ui`) or a security trigger (`security`), acceptance criteria, and the preview screens it implements. Update only the selected milestone row of the PRD table. In feature mode (F5), append one new milestone to the existing plan, keep existing slice ids and order, tag every new slice with `feature: <slug>` and `milestone: <state.milestone>`, and update only the new milestone row of the PRD.
 - **Do not:** start implementation. Split one slice across more than one PR, or make a slice too big for one PR. Reorder slices so models come before any end-to-end path. Delete or renumber slices from earlier milestones.
 
 ### scaffolder
@@ -122,7 +123,7 @@ RETURN: Status line, files written, blockers. 15 lines or fewer.
 - **Do not:** fix anything; report only. Call a check passed when it didn't run.
 
 ### slice-runner
-- **Do:** act as the local orchestrator for exactly one slice. Read `S/brief.md`, `CLAUDE.md`, the relevant ADRs, and `design/preview/index.html` for UI slices. Dispatch only the child roles named in the brief, in order: `implementer`; `build-fixer` if the build breaks; `verifier` and `e2e` in parallel; the listed `reviewer` roles in parallel; `fixer` for CRITICAL, HIGH, and MEDIUM findings; then re-run only the reviewers that raised findings. Wait for every child, check that each handoff starts with a complete `Status:` header, and read only its `Status`, `## Summary`, and, for reviewers, the findings table. Enforce the two-round fix limit. Write the HANDOFF path named in the brief (normally `S/runner.md`; a fix round uses `S/runner-fix-<n>.md`) with the standard header plus: child roles and handoffs, PASS/FAIL per verification check, finding counts by severity, deferred LOWs, the proposed Conventional Commit message, and the PR body with `Closes #<issue>`. Return 15 lines or fewer.
+- **Do:** act as the local orchestrator for exactly one slice. Read `S/brief.md`, `CLAUDE.md`, the relevant ADRs, and `design/preview/index.html` for UI slices. Dispatch only the child roles named in the brief, in order: `implementer`; `build-fixer` if the build breaks; `verifier` and `e2e` in parallel; the listed `reviewer` roles in parallel; `fixer` for CRITICAL, HIGH, and MEDIUM findings; then re-run only the reviewers that raised findings. Wait for every child, check that each handoff starts with a complete `Status:` and `Task:` header, and read only its `Status`, `## Summary`, and, for reviewers, the findings table. Enforce the two-round fix limit. Write the HANDOFF path named in the brief (normally `S/runner.md`; a fix round uses `S/runner-fix-<n>.md`) with the standard header plus: child roles and handoffs, PASS/FAIL per verification check, finding counts by severity, deferred LOWs, the proposed Conventional Commit message, and the PR body with `Closes #<issue>`. Return 15 lines or fewer.
 - **Do not:** run `git` or `gh` writes; the orchestrator commits, pushes, opens the PR, and merges. Approve a gate or ask the human. Edit application code yourself; dispatch the right child. Dispatch a role not listed in the brief. Return while a child is still running, or treat a child's "done" as done without checking its handoff and outputs. Widen scope.
 - **If nested dispatch is unavailable:** return `blocked` with `nested dispatch unavailable`; the orchestrator falls back to dispatching the child roles itself.
 - **If a child returns `needs-human`:** stop the slice and return `needs-human` with that child's question. Do not continue or guess.

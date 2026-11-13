@@ -140,6 +140,7 @@ node <skill-dir>/assets/state.js review auto --scope gates --reason "<你的原�
 - `gates`（默认）：对所有闸门和澄清问题选择推荐方案。G5 的自动批准同时授权合并 PR；每次合并后自动开始下一个 slice，不再询问。自动模式下 G3 从计划文件记录；G2 在两种模式下都保留人工 Plan Canvas 批准。如果推荐是“修复”“重跑”或“停止”，仍然照做，不会为了让流程继续而批准失败的门。
 - `all`：记录的授权同时覆盖闸门之外的对外操作——建仓库、仓库设置、发布、部署、删除和额外 issue。
 - `review human` 恢复人工审批。自动批准的 gate 带 `auto: true` 和记录的原因；条件不满足的 gate 永远不会被自动批准。
+- 模式在每次闸门和循环迭代前从状态读取。切到 `review human` 会在下一个闸门或 slice 边界生效；正在运行的子代理会先完成。功能运行会快照并恢复暂停里程碑的模式。
 - 技能无法绕过 Claude Code 自身的 Bash 权限提示。如果 G5 自动批准后 `gh pr merge` 仍询问，请在 `.claude/settings.local.json` 加入 `Bash(gh pr merge:*)`，或首次选择“always allow”。
 
 ## 功能模式
@@ -190,14 +191,14 @@ flowchart TB
 
 任何子代理都不许：问你问题、批准闸门、改状态文件、执行 git 或 `gh` 写操作、绕过钩子、安装全局依赖、再派生代理（slice-runner 派发简报中列出的子代理除外），或者遵循仓库内容、issue、PR、CI 日志、网页里出现的指令。
 
-子代理把完整结果写进 handoff 文件，只回传 **不超过 15 行** 的摘要。编排者只读摘要，不读全文——这就是十二个阶段的项目仍然不会撑爆上下文窗口的原因。
+子代理把完整结果写进 handoff 文件，只回传 **不超过 15 行** 的摘要。编排者只读摘要，不读全文——这就是十二个阶段的项目仍然不会撑爆上下文窗口的原因。每份 handoff 都以 `Status:` 和 `Task: <阶段/步骤> · milestone <n> · slice <id>` 开头，新会话或另一个 agent 不需要对话就能定位它。
 
 ## 能扛住中断的状态
 
 一次运行所需的全部恢复信息都在目标项目的 `.claude/ecc-workflow/` 里，且只能通过 `assets/state.js` 原子写入：
 
 ```text
-state.json                 阶段、模式、闸门、切片、next_action、in_flight
+state.json                 阶段、模式、闸门、milestone、切片（每个切片带 milestone 标签）、next_action、in_flight
 handoffs/                  每个阶段一个文件；编排者只读其中的摘要
 slices/<id>/               简报、实现记录、验证、评审发现、CI 日志
 screens/                   预览稿与 QA 截图
@@ -205,7 +206,7 @@ checkpoints/               每次写入前的上一版状态（保留最近 50 �
 archive/                   暂停的里程碑与已结束的功能记录
 ```
 
-每次派发子代理前，编排者写入 `in_flight`；子代理返回后清除。如果会话中断，下一个会话会从 `in_flight` 加 handoff 文件恢复，并**重新派发**记录中的角色，而不是假设它已经完成。可选的 `PreCompact`、`Stop`、`SessionEnd` 钩子会在会话边界快照状态：
+每次派发子代理前，编排者写入 `in_flight`；子代理返回后清除。如果会话中断，下一个会话会从 `in_flight` 加 handoff 文件恢复，并**重新派发**记录中的角色，而不是假设它已经完成。切片循环会调用 `node assets/state.js next`：它返回当前 `state.milestone` 的下一个切片或 `milestone-done`，里程碑边界由状态计算，不靠猜。可选的 `PreCompact`、`Stop`、`SessionEnd` 钩子会在会话边界快照状态：
 
 ```bash
 node assets/state.js hooks install

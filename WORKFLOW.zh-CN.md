@@ -136,7 +136,7 @@ git add -A && git commit -m "chore: bootstrap repository"
 
 ## 自主模式
 
-如果你明确选择不做人工审核，用 `state.js review auto --reason "<你的原话>"` 记录。之后闸门和问题都使用推荐方案并以 `--auto` 标记；G5 的自动批准同时授权合并 PR，并在合并后自动开始下一个 slice，不再询问。自动模式下 G3 从计划文件记录；G2 在两种模式下都保留人工 canvas 裁决。如果推荐是修复、重跑或停止，流程仍然照做。`--scope all` 还会覆盖闸门之外的对外操作确认。`review human` 恢复人工审批。
+如果你明确选择不做人工审核，用 `state.js review auto --reason "<你的原话>"` 记录。之后闸门和问题都使用推荐方案并以 `--auto` 标记；G5 的自动批准同时授权合并 PR，并在合并后自动开始下一个 slice，不再询问。自动模式下 G3 从计划文件记录；G2 在两种模式下都保留人工 canvas 裁决。模式切换在下一个闸门或 slice 边界生效；正在运行的子代理会先完成。如果推荐是修复、重跑或停止，流程仍然照做。`--scope all` 还会覆盖闸门之外的对外操作确认。`review human` 恢复人工审批。
 
 ## 第 1 阶段：PRD
 
@@ -400,7 +400,7 @@ gh pr checks --watch   # after /pr master has opened it
 > [!WARNING]
 > `/security-scan`（AgentShield）审计的是**代理配置**：`.claude/`、钩子、MCP 服务器、权限。它不审查你的应用代码。在 harness 配置变更时运行它，应用安全交给 `security-reviewer`。
 
-**G5：** CI 通过、问题已解决、已合并。人工模式下合并需要你批准；自动模式下以 `--auto` 记录的 G5 就是批准，直接合并，不再询问。删除分支后开始下一个切片；如果里程碑已完成，则进入第 10 阶段。
+**G5：** CI 通过、问题已解决、已合并。人工模式下合并需要你批准；自动模式下以 `--auto` 记录的 G5 就是批准，直接合并，不再询问。技能会调用 `state.js next` 选择下一个切片或报告 `milestone-done`；每个切片都带 milestone 编号。删除分支后开始下一个切片；如果里程碑已完成，则进入第 10 阶段。
 
 ## 第 10 阶段：发布
 

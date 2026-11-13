@@ -4,7 +4,7 @@ description: "Run the full gated ECC lifecycle for a new project, from an empty 
 argument-hint: "[new <idea> | feature <idea> | resume | status | slice <id> | goto <stage>]"
 disable-model-invocation: true
 metadata:
-  version: "1.3.0"
+  version: "1.4.0"
   origin: local
   source: WORKFLOW.md
   requires: "ecc plugin 2.2.x, gh, git, node, ecc-plan-canvas on PATH"
@@ -87,7 +87,7 @@ node <skill-dir>/assets/state.js status --json
 gh auth status && command -v ecc-plan-canvas && git --version && node --version
 ```
 
-4. If `in_flight` is set, print it and its recovery line. Check every handoff in `in_flight.handoffs` (or `in_flight.handoff` when singular) and whether each starts with a complete `Status:` header: if yes, read the `## Summary` and continue; if no, re-dispatch the recorded roles with the same brief. Never assume a subagent finished because time passed.
+4. If `in_flight` is set, print it and its recovery line. Check every handoff in `in_flight.handoffs` (or `in_flight.handoff` when singular) and whether each starts with a complete `Status:` and `Task:` header: if yes, read the `## Summary` and continue; if no, re-dispatch the recorded roles with the same brief. Never assume a subagent finished because time passed.
 5. Print a status block of 10 lines or fewer: mode, stage, gate states, current slice, `in_flight`, next action.
 6. Load only the current stage. `<skill-dir>` is this skill's base directory. Feature mode uses `F0`–`F7`; the same pattern works:
 
@@ -127,7 +127,7 @@ awk -v s='^## Stage N:' '$0 ~ s {p=1} p && /^## Stage / && $0 !~ s {exit} p' <sk
   "milestone_seq": 3,
   "milestones": { "1": { "status": "complete", "at": "2026-11-04T10:00:00.000Z" } },
   "slices": [
-    { "id": "01-signup", "title": "Sign up", "ui": true, "security": true,
+    { "id": "01-signup", "title": "Sign up", "milestone": 1, "ui": true, "security": true,
       "status": "pending | in-progress | in-review | merged",
       "branch": null, "issue": null, "pr": null }
   ],
@@ -140,7 +140,9 @@ awk -v s='^## Stage N:' '$0 ~ s {p=1} p && /^## Stage / && $0 !~ s {exit} p' <sk
   },
   "paused": {
     "mode": "greenfield", "milestone": 2, "current_slice": "18-entry", "next_action": "Build slice 18",
-    "stage": 8, "status": "in-progress", "gates": { "...": "snapshot" }
+    "stage": 8, "status": "in-progress", "protection": "convention",
+    "review_mode": "human", "review_scope": "gates", "review_reason": null, "review_set_at": null,
+    "gates": { "...": "snapshot" }
   },
   "in_flight": {
     "role": "implementer", "step": "8.3",
@@ -153,7 +155,7 @@ awk -v s='^## Stage N:' '$0 ~ s {p=1} p && /^## Stage / && $0 !~ s {exit} p' <sk
 }
 ```
 
-`feature`, `paused`, and `in_flight` are `null` when unused. A parallel dispatch adds `in_flight.roles` and `in_flight.handoffs` arrays; `role` and `handoff` remain the first entry. `paused` snapshots the fields feature work can change: `mode`, `milestone`, `current_slice`, `next_action`, `stage`, `status`, `prd`, `plan`, `stack`, `repo`, and `gates`. `milestone_seq` is the highest milestone number allocated; feature runs increment it so repeated features never reuse a number. `next_action` is always one concrete sentence; a fresh session must be able to resume from it alone. `revision` is the optimistic-lock counter: an update built from a stale read is rejected. `review_mode`/`review_scope` record the autonomous opt-in, and every gate auto-approved under it has `auto: true`. `gates.G5.slice` records which slice the approval covers, and `gates.*.evidence_hash` binds file evidence to its content.
+`feature`, `paused`, and `in_flight` are `null` when unused. A parallel dispatch adds `in_flight.roles` and `in_flight.handoffs` arrays; `role` and `handoff` remain the first entry. `paused` snapshots the fields feature work can change: `mode`, `milestone`, `current_slice`, `next_action`, `stage`, `status`, `prd`, `plan`, `stack`, `repo`, `protection`, `review_mode`, `review_scope`, `review_reason`, `review_set_at`, and `gates`; `finish-feature` restores them, so a feature run's mode change does not leak into the paused milestone. `milestone_seq` is the highest milestone number allocated; feature runs increment it so repeated features never reuse a number. `state.milestone` is the milestone currently being built; every slice imported for it carries the same number in `slices[].milestone`, and a slice without that tag is treated as belonging to the current milestone. `node assets/state.js next` reads those tags and returns `{"action":"start|resume","slice":"<id>"}`, `{"action":"blocked",...}`, or `{"action":"milestone-done","milestone":<n>}`. `next_action` is always one concrete sentence; a fresh session must be able to resume from it alone. `revision` is the optimistic-lock counter: an update built from a stale read is rejected. `review_mode`/`review_scope` record the autonomous opt-in, and every gate auto-approved under it has `auto: true`. `gates.G5.slice` records which slice the approval covers, and `gates.*.evidence_hash` binds file evidence to its content.
 
 ### State persistence
 
@@ -200,10 +202,11 @@ Subagents write their results to files and return only a short summary to you.
 
 The whole directory is gitignored by Stage 0, or by F0 for an existing project. It is a local record, not a deliverable. Durable outputs (PRD, plan, design, ADRs, code) go to their normal tracked paths. Feature specs are durable and tracked: `.claude/features/<NN>-<slug>/spec.md`.
 
-Every handoff starts with this header:
+Every handoff starts with this header. The `Task` line is what lets a new session or another agent place the handoff without the conversation.
 
 ```markdown
 Status: done | blocked | needs-human
+Task: <stage/step> · milestone <n> · slice <id or none>
 Outputs: <paths written>
 ## Summary
 <15 lines or fewer>
@@ -215,7 +218,7 @@ Outputs: <paths written>
 
 ## Dispatching subagents
 
-- Use the brief template and the role table in `references/subagents.md`. Fill every field. A role's **Do not** list goes into the brief verbatim, together with the standard list.
+- Use the brief template and the role table in `references/subagents.md`. Fill every field, including `MILESTONE` from `state.milestone`. A role's **Do not** list goes into the brief verbatim, together with the standard list.
 - Before dispatching, set `in_flight`; after it returns, clear it:
 
 ```bash
@@ -227,7 +230,7 @@ node <skill-dir>/assets/state.js end --next "<one concrete sentence>"
 - Run independent subagents in parallel in a single message (for example, all Stage 9 reviewers).
 - **Slice-runner:** dispatch one per slice with the child roles and child handoffs in the brief. Set `in_flight` with `--role slice-runner --handoff <the runner's HANDOFF path>` (normally `S/runner.md`; a fix round uses `S/runner-fix-<n>.md`). The runner dispatches only the listed children, waits for all of them, and returns one summary; it never runs git or `gh` writes. On resume, if the runner handoff is missing or incomplete, re-dispatch the runner; it reads the existing child handoffs and skips the children that already finished.
 - On resume, an `in_flight` role with a missing or incomplete handoff is re-dispatched, not assumed done.
-- When one returns, read its handoff's `Status` and `## Summary` only.
+- When one returns, read its handoff's `Status` and `## Summary` only, and check that the header has both `Status` and `Task`.
   - `done`: check the claimed outputs exist. For code, run the test command yourself once.
   - `needs-human`: ask the human the listed question, then re-dispatch with the answer.
   - `blocked`: re-dispatch with a narrower brief at most twice, then escalate to the human.
@@ -250,9 +253,15 @@ node <skill-dir>/assets/state.js review auto --scope gates --reason "<the human'
 
 ### Continuous slice loop
 
-In auto mode the run does not stop after a merged PR and does not ask whether to continue. After the merge, update state and immediately start the next pending slice: branch from the base branch, extract the brief, dispatch the slice-runner, then run Stage 9. Keep going through every slice and every milestone until a stop condition below or the human interrupts.
+In auto mode the run does not stop after a merged PR and does not ask whether to continue. After the merge, run `state.js next` and act on its JSON:
 
-When a milestone completes, run `state.js milestone <n> complete`, then plan the next milestone (Stage 5 steps 3–6: planner, slice import, G3 recorded from the plan file, issues) and continue. Auto-record G3 only when the planner handoff is `done`, the plan exists, and the slices are imported. When the last MVP milestone is complete, go to Stage 10. In auto mode with `scope=gates`, run the release audits and deployment plan, then stop before the tag, release, and deploy and report; `--scope all` continues through them.
+- `start` (`pending`): branch from the base branch, extract the brief, dispatch the slice-runner, then run Stage 9. Do it immediately.
+- `resume` (`in-progress`): continue Stage 8 for that slice.
+- `resume` (`in-review`): continue Stage 9 at the PR checks and review; do not re-run Stage 8.
+- `blocked`: stop and report the slice and status.
+- `milestone-done`: run `state.js milestone <n> complete`, set `milestone` to the next pending number from the PRD table, plan that milestone (Stage 5 steps 3–6: planner, slice import, G3 recorded from the plan file, issues), then run `state.js next` again and continue.
+
+Keep going through every slice and every milestone until a stop condition below or the human interrupts. Auto-record G3 only when the planner handoff is `done`, the plan exists, and the slices are imported. When the last MVP milestone is complete, go to Stage 10. In auto mode with `scope=gates`, run the release audits and deployment plan, then stop before the tag, release, and deploy and report; `--scope all` continues through them.
 
 Stop and report — clear `in_flight`, set `status`, write a one-sentence `next_action`, and print the stop reason with `/ecc-workflow resume` — when:
 
@@ -263,6 +272,16 @@ Stop and report — clear `in_flight`, set `status`, write a one-sentence `next_
 5. The human interrupts (Esc) or runs `state.js review human`.
 
 A stop is not a question. Do not use `AskUserQuestion` to ask "continue?"; report the stop, the evidence, and the exact resume command.
+
+### Switching modes
+
+`review_mode` and `review_scope` are read from state, not cached. Re-read them before every gate, before every `gate ... --auto`, and at the top of every loop iteration.
+
+- **Auto → human:** the running slice or subagent finishes; the change takes effect at the next gate or slice boundary. Ask with `AskUserQuestion` and do not start the next slice until the human answers. A gate already waiting for a human answer must be answered or interrupted; auto mode takes effect at the next gate.
+- **Human → auto:** the next gate and the next slice use the recommended option. The recorded `review_reason` is the opt-in. Never auto-approve a gate whose criteria fail, and never auto-record G2.
+- **Scope changes:** `gates` ↔ `all` applies to the next outward action. If the scope is no longer `all`, ask before repo settings, releases, deploys, deletions, or extra issues.
+- **Feature runs:** `paused` snapshots the paused run's `review_mode` and `review_scope`; `finish-feature` restores them, so a feature run's mode change does not leak into the paused milestone.
+- **Race guard:** if `gate ... --auto` fails because `review_mode` is no longer `auto`, do not force it; ask the human. Re-read both values immediately before an outward action (merge, tag, release, deploy); if either no longer covers it, ask.
 
 **Harness permissions:** the skill cannot bypass Claude Code's own Bash permission prompts. If `gh pr merge` still asks after G5 is auto-approved, that is the harness layer, not the skill. Add narrow rules to `.claude/settings.local.json` (the human edits this file; the guard does not bind the human), or approve once and choose "always allow":
 

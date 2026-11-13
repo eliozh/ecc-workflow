@@ -164,6 +164,60 @@ test('slices import rejects duplicate ids in the file', () => {
   }
 });
 
+test('next finds the current milestone slice and detects its completion', () => {
+  const dir = tempProject();
+  try {
+    state.initState(dir, { mode: 'greenfield', project: 'demo' });
+    state.setState(dir, ['milestone=2']);
+    state.setState(dir, [
+      'slices=[{"id":"01-a","milestone":1,"status":"merged"},'
+        + '{"id":"02-b","milestone":2,"status":"pending"},'
+        + '{"id":"02-c","milestone":2,"status":"pending"}]',
+    ]);
+
+    assert.deepEqual(state.nextAction(dir), {
+      action: 'start', milestone: 2, slice: '02-b', status: 'pending',
+    });
+
+    state.updateSlice(dir, '02-b', ['status=in-review']);
+    assert.deepEqual(state.nextAction(dir), {
+      action: 'resume', milestone: 2, slice: '02-b', status: 'in-review',
+    });
+
+    state.updateSlice(dir, '02-b', ['status=merged']);
+    state.updateSlice(dir, '02-c', ['status=merged']);
+    assert.deepEqual(state.nextAction(dir), { action: 'milestone-done', milestone: 2 });
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('next treats untagged slices as current and reports older unmerged work', () => {
+  const dir = tempProject();
+  try {
+    state.initState(dir, { mode: 'greenfield', project: 'demo' });
+    state.setState(dir, ['milestone=2']);
+    state.setState(dir, ['slices=[{"id":"legacy","status":"pending"}]']);
+    assert.deepEqual(state.nextAction(dir), {
+      action: 'start', milestone: 2, slice: 'legacy', status: 'pending',
+    });
+
+    state.setState(dir, [
+      'slices=[{"id":"old","milestone":1,"status":"merged"},'
+        + '{"id":"new","milestone":2,"status":"merged"},'
+        + '{"id":"older","milestone":1,"status":"pending"}]',
+    ]);
+    assert.deepEqual(state.nextAction(dir), {
+      action: 'blocked',
+      milestone: 2,
+      reason: 'a previous milestone has unmerged slices',
+      slices: ['older'],
+    });
+  } finally {
+    cleanup(dir);
+  }
+});
+
 test('set rejects protected keys and invalid values', () => {
   const dir = tempProject();
   try {
@@ -444,6 +498,57 @@ test('feature init pauses the milestone and resets the feature gates', () => {
     assert.equal(created.paused.next_action, 'Build slice 18');
     assert.equal(created.paused.gates.G1.status, 'approved');
     assert.equal(created.feature.slug, 'oauth-login');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('feature init refuses while a step is in flight', () => {
+  const dir = tempProject();
+  try {
+    state.initState(dir, { mode: 'greenfield', project: 'demo' });
+    state.beginState(dir, { role: 'implementer', handoff: 'H/08-implement.md' });
+    assert.throws(
+      () => state.initState(dir, { mode: 'feature', slug: 'blocked' }),
+      /in flight/,
+    );
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('finish-feature restores the paused review mode and protection', () => {
+  const dir = tempProject();
+  try {
+    state.initState(dir, { mode: 'greenfield', project: 'demo' });
+    state.setState(dir, ['protection=convention']);
+    state.reviewState(dir, ['auto'], { reason: 'paused auto', scope: 'all' });
+    state.initState(dir, { mode: 'feature', slug: 'oauth-login' });
+    state.reviewState(dir, ['human']);
+
+    const restored = state.finishFeatureState(dir);
+    assert.equal(restored.review_mode, 'auto');
+    assert.equal(restored.review_scope, 'all');
+    assert.equal(restored.review_reason, 'paused auto');
+    assert.match(restored.review_set_at, /^\d{4}-/);
+    assert.equal(restored.protection, 'convention');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('summarize shows the current milestone and paused review mode', () => {
+  const dir = tempProject();
+  try {
+    state.initState(dir, { mode: 'greenfield', project: 'demo' });
+    state.setState(dir, ['milestone=2']);
+    state.reviewState(dir, ['auto'], { reason: 'paused auto' });
+    state.initState(dir, { mode: 'feature', slug: 'oauth-login' });
+    state.reviewState(dir, ['human']);
+
+    const text = state.summarize(state.readState(dir), dir);
+    assert.match(text, /milestone: 3/);
+    assert.match(text, /paused: milestone 2, slice none, review auto/);
   } finally {
     cleanup(dir);
   }
