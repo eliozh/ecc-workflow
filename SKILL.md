@@ -87,7 +87,7 @@ node <skill-dir>/assets/state.js status --json
 gh auth status && command -v ecc-plan-canvas && git --version && node --version
 ```
 
-4. If `in_flight` is set, print it and its recovery line. Check every handoff in `in_flight.handoffs` (or `in_flight.handoff` when singular) and whether each starts with a complete `Status:` and `Task:` header: if yes, read the `## Summary` and continue; if no, re-dispatch the recorded roles with the same brief. Never assume a subagent finished because time passed.
+4. If `in_flight` is set, print it and its recovery line. Check every handoff in `in_flight.handoffs` (or `in_flight.handoff` when singular) and whether each starts with a complete `Status:` header plus either `Task:` or legacy `Outputs:`: if yes, read the `## Summary` and continue; if no, re-dispatch the recorded roles with the same brief. Never assume a subagent finished because time passed.
 5. Print a status block of 10 lines or fewer: mode, stage, gate states, current slice, `in_flight`, next action.
 6. Load only the current stage. `<skill-dir>` is this skill's base directory. Feature mode uses `F0`–`F7`; the same pattern works:
 
@@ -181,6 +181,17 @@ node <skill-dir>/assets/state.js hooks install
   Hooks snapshot the state on disk, not the orchestrator's in-memory intent, so `in_flight` remains the recovery source for a mid-step interruption. They do not summarize the conversation; keep `next_action` current before any session boundary. `state.js hooks status` warns when the installed command points at a stale skill path; reinstall with `hooks install`. Remove them with `state.js hooks remove`.
 - If `state.json` is corrupt, do not overwrite it. Run `node <skill-dir>/assets/state.js restore` (or `restore <checkpoint-file>`) to bring back the newest valid checkpoint; it backs up the corrupt file first. Tell the human what the restored state lost.
 
+### Upgrading an existing state
+
+The helper reads a v2 state directly and upgrades a v1 state on the next write. Before the first auto-mode run in a repo created by an older skill:
+
+1. Run `node <skill-dir>/assets/state.js verify` and `status --json`.
+2. Backfill `slices[].milestone` if it is missing: `node <skill-dir>/assets/state.js slice <id> milestone=<n>`. An untagged slice is treated as belonging to `state.milestone`.
+3. Re-record the auto opt-in with `review auto --reason "<their words>"` if it predates G5 auto-merge; older `gates` scope did not authorize merges. `review human` clears it.
+4. Legacy handoffs with `Status:` + `Outputs:` are accepted; new handoffs also carry `Task:`.
+
+A paused run created by an older skill has no review fields; `finish-feature` restores it as `human`/`gates`, the safe default.
+
 ## Handoff files
 
 Subagents write their results to files and return only a short summary to you.
@@ -202,7 +213,7 @@ Subagents write their results to files and return only a short summary to you.
 
 The whole directory is gitignored by Stage 0, or by F0 for an existing project. It is a local record, not a deliverable. Durable outputs (PRD, plan, design, ADRs, code) go to their normal tracked paths. Feature specs are durable and tracked: `.claude/features/<NN>-<slug>/spec.md`.
 
-Every handoff starts with this header. The `Task` line is what lets a new session or another agent place the handoff without the conversation.
+Every handoff starts with this header. New handoffs include `Task`; legacy handoffs with `Status` and `Outputs` are still accepted. The `Task` line is what lets a new session or another agent place the handoff without the conversation.
 
 ```markdown
 Status: done | blocked | needs-human
@@ -230,7 +241,7 @@ node <skill-dir>/assets/state.js end --next "<one concrete sentence>"
 - Run independent subagents in parallel in a single message (for example, all Stage 9 reviewers).
 - **Slice-runner:** dispatch one per slice with the child roles and child handoffs in the brief. Set `in_flight` with `--role slice-runner --handoff <the runner's HANDOFF path>` (normally `S/runner.md`; a fix round uses `S/runner-fix-<n>.md`). The runner dispatches only the listed children, waits for all of them, and returns one summary; it never runs git or `gh` writes. On resume, if the runner handoff is missing or incomplete, re-dispatch the runner; it reads the existing child handoffs and skips the children that already finished.
 - On resume, an `in_flight` role with a missing or incomplete handoff is re-dispatched, not assumed done.
-- When one returns, read its handoff's `Status` and `## Summary` only, and check that the header has both `Status` and `Task`.
+- When one returns, read its handoff's `Status` and `## Summary` only, and check that the header has `Status` and either `Task` or legacy `Outputs`.
   - `done`: check the claimed outputs exist. For code, run the test command yourself once.
   - `needs-human`: ask the human the listed question, then re-dispatch with the answer.
   - `blocked`: re-dispatch with a narrower brief at most twice, then escalate to the human.

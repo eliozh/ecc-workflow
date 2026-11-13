@@ -850,7 +850,7 @@ function beginState(root, opts = {}) {
   const targets = handoffs.length ? handoffs.join(', ') : 'the handoff';
   const who = roles.join(', ');
   state.next_action = handoffs.length
-    ? `Read ${targets} if each exists and has a complete status and task header; otherwise re-dispatch ${who}`
+    ? `Read ${targets} if each exists and has a complete status header (Task preferred; legacy Outputs accepted); otherwise re-dispatch ${who}`
     : `Re-dispatch ${who} if it did not finish`;
   return writeState(root, state, { label: 'begin' });
 }
