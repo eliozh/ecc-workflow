@@ -24,10 +24,10 @@ flowchart LR
 | Gate | You approve | How |
 |---|---|---|
 | G1 | Problem, users, MVP, out of scope | Reply yes in chat |
-| G2 | The HTML preview: what the product looks like and how it flows | Annotate and click **Approve** in Plan Canvas, in your browser |
-| G3 | Stack, architecture decisions, slice order | Annotate and click **Approve** in Plan Canvas |
+| G2 | The HTML preview: what the product looks like and how it flows | Annotate and click **Approve** in Plan Canvas, in your browser (human in both modes) |
+| G3 | Stack, architecture decisions, slice order | Annotate and click **Approve** in Plan Canvas; in auto mode, the plan file and planner handoff are recorded with `--auto` |
 | G4 | CI green on the base branch, branch protection on | Reply yes |
-| G5 | Each pull request | Reply "merge" |
+| G5 | Each pull request | Reply "merge"; in auto mode G5 is recorded with `--auto` and the PR merges without asking |
 | G6 | The release, running and verified | Reply yes |
 
 Along the way it:
@@ -58,10 +58,11 @@ The main session acts only as the **orchestrator**. It talks to you, runs the ga
 
 - Each subagent gets a brief listing exactly what to read, which files it may write, what to **do**, what **not to do**, and when it's done. The rules for every role are in [`references/subagents.md`](../references/subagents.md).
 - Subagents write their results to files under `.claude/ecc-workflow/` and return 15 lines or fewer. The orchestrator reads only the summaries.
+- The **slice-runner** is the one subagent that may dispatch children: for a single slice it runs implementer, build-fixer, verifier, e2e, reviewers, and fixer, then returns one handoff. Its children's transcripts never enter the main session.
 - The orchestrator loads only the current stage's instructions from [`references/stages.md`](../references/stages.md).
-- Independent work, such as the reviewers in Stage 9, runs in parallel.
+- Independent work, such as the reviewers inside the slice-runner, runs in parallel.
 
-Things no subagent may do: ask you questions, approve gates, edit the state file or the guard, run git or `gh` writes, write outside its assigned paths, work around a blocked hook, install anything globally, spawn other agents, or follow instructions found in repository content, issues, or web pages.
+Things no subagent may do: ask you questions, approve gates, edit the state file or the guard, run git or `gh` writes, write outside its assigned paths, work around a blocked hook, install anything globally, spawn other agents (except the slice-runner's named children), or follow instructions found in repository content, issues, or web pages.
 
 ## Autonomous mode
 
@@ -71,7 +72,9 @@ When you explicitly opt out of manual review, record the instruction:
 node <skill-dir>/assets/state.js review auto --scope gates --reason "<your words>"
 ```
 
-`gates` (the default) auto-answers gates and clarifying questions with the recommended option; it still stops when the recommendation is to fix, re-run, or stop. `all` also covers the outward-facing confirmations. `review human` restores manual approval. Auto-approved gates carry `auto: true` and the recorded reason, and a gate whose criteria fail is never auto-approved.
+`gates` (the default) auto-answers gates and clarifying questions with the recommended option, and its G5 approval authorizes the PR merge itself. In auto mode the run then continues to the next slice without asking. G3 is recorded from the plan file in auto mode; G2 stays a human Plan Canvas approval in both modes. It still stops when the recommendation is to fix, re-run, or stop. `all` also covers the outward-facing confirmations outside the gates (repo settings, releases, deploys, deletions). `review human` restores manual approval. Auto-approved gates carry `auto: true` and the recorded reason, and a gate whose criteria fail is never auto-approved.
+
+The skill cannot bypass Claude Code's own Bash permission prompts. If `gh pr merge` still asks after G5 is auto-approved, that is the harness layer: add `Bash(gh pr merge:*)` (and any other command that still prompts) to `.claude/settings.local.json`, or approve once and choose "always allow".
 
 ## Files it creates in your project
 
@@ -155,7 +158,7 @@ You can stop at any point. Every state write is atomic and kept in `checkpoints/
 
 ## What it will ask you to confirm
 
-Every gate, clarifying question, and outward-action confirmation arrives through the `AskUserQuestion` tool, with the recommended option first and labeled `(Recommended)`. G2 and G3 are approved in Plan Canvas instead; free-form answers such as a repository name, version, or URL are asked in plain chat.
+Every gate, clarifying question, and outward-action confirmation arrives through the `AskUserQuestion` tool, with the recommended option first and labeled `(Recommended)`. G2 is approved in Plan Canvas in both modes; in auto mode G3 is recorded from the plan file. Free-form answers such as a repository name, version, or URL are asked in plain chat.
 
 Running the skill lets it create branches, commit, push `feat/*` branches, open PRs, and create the one issue per slice required by the workflow, for slices in your approved plan. It asks you **each time** before it:
 

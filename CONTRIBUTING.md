@@ -42,7 +42,7 @@ If you change behavior that a stage relies on, also update the matching section 
 |---|---|
 | `SKILL.md` | Orchestrator rules, mode table, state schema, gate table, stage map |
 | `references/stages.md` | One section per stage: numbered steps, executors, handoffs |
-| `references/subagents.md` | Brief template, standard do-not list, 18 role contracts |
+| `references/subagents.md` | Brief template, standard do-not list, 19 role contracts |
 | `assets/state.js` | The only writer of `state.json`; checkpoints, `in_flight`, hooks |
 | `assets/guard.sh` | Install/remove the two pre-approval Hookify rules |
 | `assets/bootstrap.sh` | Stage 0: repo, ignore file, guard, local state dir |

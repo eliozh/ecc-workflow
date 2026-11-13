@@ -383,6 +383,28 @@ test('review auto records the opt-in and gates can use --auto', () => {
   }
 });
 
+test('auto mode with the default gates scope can auto-approve G5', () => {
+  const dir = tempProject();
+  try {
+    state.initState(dir, { mode: 'greenfield', project: 'demo' });
+    state.setState(dir, ['slices=[{"id":"01-a"}]']);
+    const auto = state.reviewState(dir, ['auto'], { reason: 'merge without asking' });
+    assert.equal(auto.review_scope, 'gates');
+
+    state.gateState(dir, ['G5', 'approved'], {
+      evidence: 'https://example.com/pr/1',
+      slice: '01-a',
+      auto: true,
+    });
+    const gate = state.readState(dir).gates.G5;
+    assert.equal(gate.status, 'approved');
+    assert.equal(gate.auto, true);
+    assert.equal(gate.slice, '01-a');
+  } finally {
+    cleanup(dir);
+  }
+});
+
 test('checkpoint writes a copy and keeps the directory bounded', () => {
   const dir = tempProject();
   try {

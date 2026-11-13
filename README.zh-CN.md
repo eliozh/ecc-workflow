@@ -106,10 +106,10 @@ flowchart LR
 | 闸门 | 人类批准什么 | 怎么批准 |
 |---|---|---|
 | **G1** | 问题、用户、可度量假设、MVP、不做什么 | 用 `AskUserQuestion` 确认 |
-| **G2** | 产品长什么样、怎么走通 | 在 Plan Canvas 里标注并点击 **Approve** |
-| **G3** | 技术栈、架构决策、切片顺序 | 在 Plan Canvas 里标注并点击 **Approve** |
+| **G2** | 产品长什么样、怎么走通 | 在 Plan Canvas 里标注并点击 **Approve**（两种模式都需要人工） |
+| **G3** | 技术栈、架构决策、切片顺序 | 在 Plan Canvas 里标注并点击 **Approve**；自动模式下用计划文件和 planner handoff 以 `--auto` 记录 |
 | **G4** | 基线分支 CI 绿、分支保护已开 | 用 `AskUserQuestion` 确认 |
-| **G5** | 每个 PR——CI 状态与按严重度分级的发现 | 用 `AskUserQuestion` 回复 `merge` |
+| **G5** | 每个 PR——CI 状态与按严重度分级的发现 | 用 `AskUserQuestion` 回复 `merge`；自动模式下 G5 以 `--auto` 记录并直接合并 |
 | **G6** | 发布已运行并验证，回滚已演练 | 用 `AskUserQuestion` 确认 |
 
 每次批准都会把时间与证据路径写入状态文件。没有明确的人工答复，流程就停在那里。
@@ -137,9 +137,10 @@ flowchart LR
 node <skill-dir>/assets/state.js review auto --scope gates --reason "<你的原话>"
 ```
 
-- `gates`（默认）：对所有闸门和澄清问题选择推荐方案。如果推荐是“修复”“重跑”或“停止”，仍然照做，不会为了让流程继续而批准失败的门。
-- `all`：记录的授权同时覆盖技能确认清单里的对外操作。如果你的话包含合并、发布、部署、仓库设置或删除，用 `all`；如果只是指闸门审批，用默认的 `gates`。
+- `gates`（默认）：对所有闸门和澄清问题选择推荐方案。G5 的自动批准同时授权合并 PR；每次合并后自动开始下一个 slice，不再询问。自动模式下 G3 从计划文件记录；G2 在两种模式下都保留人工 Plan Canvas 批准。如果推荐是“修复”“重跑”或“停止”，仍然照做，不会为了让流程继续而批准失败的门。
+- `all`：记录的授权同时覆盖闸门之外的对外操作——建仓库、仓库设置、发布、部署、删除和额外 issue。
 - `review human` 恢复人工审批。自动批准的 gate 带 `auto: true` 和记录的原因；条件不满足的 gate 永远不会被自动批准。
+- 技能无法绕过 Claude Code 自身的 Bash 权限提示。如果 G5 自动批准后 `gh pr merge` 仍询问，请在 `.claude/settings.local.json` 加入 `Bash(gh pr merge:*)`，或首次选择“always allow”。
 
 ## 功能模式
 
@@ -163,11 +164,14 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-  H([人类]) <-->|闸门 · 提问 · 合并批准| O[编排者<br/>小上下文]
+  H([人类]) <-->|闸门 · 提问 · 合并批准（人工模式）| O[编排者<br/>小上下文]
   O -->|简报| A[调研 · 设计 · 预览<br/>架构 · 计划]
-  O -->|简报| B[脚手架 · 实现 · 修构建 · E2E]
-  O -->|只读评审| C[代码 · 安全 · 无障碍<br/>性能 · 数据库]
+  O -->|简报| S[脚手架]
+  O -->|每 slice 一份简报| SR[slice-runner]
+  SR -->|子代理| B[实现 · 修构建 · E2E]
+  SR -->|子代理| C[代码 · 安全 · 无障碍<br/>性能 · 数据库]
   A --> D[(handoff 文件)]
+  S --> D
   B --> D
   C --> D
   D -->|15 行摘要| O
@@ -182,7 +186,9 @@ flowchart TB
 4. **不许做什么** —— 通用禁止清单，加上该角色的专属限制。
 5. **何时算完成** —— 可检查的标准。
 
-任何子代理都不许：问你问题、批准闸门、改状态文件、执行 git 或 `gh` 写操作、绕过钩子、安装全局依赖、再派生代理，或者遵循仓库内容、issue、PR、CI 日志、网页里出现的指令。
+只有 slice-runner 多拿第六样：按执行顺序排列的子代理角色及其 handoff 路径。
+
+任何子代理都不许：问你问题、批准闸门、改状态文件、执行 git 或 `gh` 写操作、绕过钩子、安装全局依赖、再派生代理（slice-runner 派发简报中列出的子代理除外），或者遵循仓库内容、issue、PR、CI 日志、网页里出现的指令。
 
 子代理把完整结果写进 handoff 文件，只回传 **不超过 15 行** 的摘要。编排者只读摘要，不读全文——这就是十二个阶段的项目仍然不会撑爆上下文窗口的原因。
 
@@ -252,7 +258,7 @@ docs/adr/, docs/release/         架构决策、发布计划                    
 ```text
 SKILL.md                     编排者指令：闸门、状态与 handoff 格式
 references/stages.md         每个阶段的逐步流程，一次只加载一节
-references/subagents.md      简报模板与 18 个子代理角色的 do / do-not 规则
+references/subagents.md      简报模板与 19 个子代理角色的 do / do-not 规则
 assets/bootstrap.sh          Stage 0：仓库、护栏规则、本地状态目录
 assets/guard.sh              安装 / 移除 / 查看护栏规则；remove 默认保留 state-writer 规则
 assets/state.js              原子状态写入、checkpoint、in_flight、快照钩子
@@ -283,7 +289,7 @@ node --test assets/*.test.js
 | 已安装 **ECC 插件 2.2.x** 且启用钩子的 Claude Code | 提供命令、代理、评审器、Hookify 与 Plan Canvas |
 | `git` 与已登录的 `gh` | 分支、提交、PR、issue、分支保护、发布 |
 | `node`（18+） | `assets/state.js` |
-| `PATH` 中的 `ecc-plan-canvas` | G2 与 G3 的批准会话 |
+| `PATH` 中的 `ecc-plan-canvas` | G2 批准会话（以及人工模式下的 G3） |
 | `chrome-devtools` MCP（随 ECC 提供） | 预览稿与 UI 检查；缺失时显式报告为 skipped |
 | `~/.claude/rules/ecc/` 中的 ECC `common` 规则包 | 项目规范；技术栈规则包在 Stage 6 添加 |
 
